@@ -34,11 +34,28 @@ BACKUP_NAME = "NDDEV-QODER-CLI-BACKUP.json"
 BASELINE_REF = ROOT / "references" / "qoder-cli-baseline.json"
 TESTED_VERSION = "1.1.5"
 NPM_PACKAGE = "@qoder-ai/qodercli"
+INSTALL_SCRIPT_URL = "https://qoder.com/install"
+INSTALL_SCRIPT_SHA256 = "f26997301e5cf1ecff7378ffa25714ef0caf743a53f23530fdc61d4f08caaec2"
+INSTALL_SCRIPT_SIZE = 10652
 OWNER_FILE_MODE = 0o600
 OWNER_DIRECTORY_MODE = 0o700
 METADATA_MAX_BYTES = 256 * 1024
 MANAGED_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
 PROCESS_TIMEOUT_SECONDS = 120
+PROCESS_OUTPUT_MAX_BYTES = 256 * 1024
+SOFTWARE_DOWNLOAD_MAX_BYTES = 256 * 1024 * 1024
+SOFTWARE_TREE_MAX_BYTES = 512 * 1024 * 1024
+SOFTWARE_TREE_MAX_PATHS = 5000
+SOFTWARE_REPLACE_PATHS = (
+    Path("bin") / COMMAND_NAME,
+    Path("software") / "qoder-cli.json",
+)
+SOFTWARE_PARENT_PATHS = tuple(
+    sorted(
+        {relative.parent for relative in SOFTWARE_REPLACE_PATHS if relative.parent != Path(".")},
+        key=str,
+    )
+)
 SETUP_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 MANAGED_SETTINGS_KEYS = (
     "general",
@@ -109,6 +126,38 @@ TOKEN_ENV_NAMES = {
     "SSH_AUTH_SOCK",
     "GIT_ASKPASS",
 }
+SECRET_ENV_PREFIXES = (
+    "ANTHROPIC_",
+    "AWS_",
+    "AZURE_",
+    "BUN_CONFIG_",
+    "GEMINI_",
+    "GOOGLE_",
+    "MISTRAL_",
+    "NODE_AUTH_TOKEN",
+    "NPM_TOKEN",
+    "OPENAI_",
+    "OPENROUTER_",
+    "QODER_",
+    "TOGETHER_",
+    "XAI_",
+    "npm_config_",
+)
+FORBIDDEN_LAUNCH_ARGS = {
+    "--accept-edits",
+    "--allowed-tools",
+    "--dangerously-skip-permissions",
+    "--disallowed-tools",
+    "--no-yolo",
+    "--permission-mode",
+    "--plugin-dir",
+    "--settings",
+    "--worktree",
+    "--workspace",
+    "--workspace-dir",
+    "--yolo",
+}
+FORBIDDEN_LAUNCH_SHORT_ARGS = {"-c", "-r", "-w"}
 
 
 class QoderCliSetupError(Exception):
@@ -183,6 +232,101 @@ def require_regular_file(path: Path, label: str, *, owner_only: bool = False) ->
     if info.st_size > MANAGED_PAYLOAD_MAX_BYTES:
         fail(f"{label} exceeds the {MANAGED_PAYLOAD_MAX_BYTES}-byte size limit")
     return info
+
+
+def require_safe_executable(path: Path, label: str) -> os.stat_result:
+    info = require_regular_file(path, label)
+    if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+        fail(f"{label} must be owned by the current user")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        fail(f"{label} must be private to the current user with mode 0700")
+    return info
+
+
+def path_exists_no_follow(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def reject_relative_symlink_ancestors(root: Path, relative: Path) -> None:
+    current = root
+    for part in relative.parts[:-1]:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            fail(f"managed parent must be a real directory: {current}")
+        if not is_owner_private_directory(info):
+            fail(f"managed parent must be private to the current user: {current}")
+
+
+def ensure_private_parent(path: Path, label: str) -> None:
+    parent = path.parent
+    missing: list[Path] = []
+    current = parent
+    while not path_exists_no_follow(current):
+        missing.append(current)
+        current = current.parent
+    if missing:
+        info = require_directory(current, f"{label} existing ancestor")
+        if not is_owner_private_directory(info):
+            fail(f"{label} existing ancestor must be private to the current user with mode 0700")
+        for directory in reversed(missing):
+            directory.mkdir(mode=OWNER_DIRECTORY_MODE)
+            directory.chmod(OWNER_DIRECTORY_MODE)
+        return
+    try:
+        info = parent.lstat()
+    except FileNotFoundError:
+        fail(f"{label} parent creation failed")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail(f"{label} parent must be a real directory")
+    if not is_owner_private_directory(info):
+        fail(f"{label} parent must be private to the current user with mode 0700")
+
+
+def validate_managed_destination(target: Path, relative: Path) -> None:
+    if relative.is_absolute() or ".." in relative.parts:
+        fail(f"unsafe managed path: {relative}")
+    reject_relative_symlink_ancestors(target, relative)
+    path = target / relative
+    if not path_exists_no_follow(path):
+        return
+    require_regular_file(path, f"managed file {relative}", owner_only=True)
+
+
+def validate_software_parent_destination(target: Path, relative: Path) -> None:
+    path = target / relative
+    if not path_exists_no_follow(path):
+        return
+    info = require_directory(path, f"software parent {relative}")
+    if not is_owner_private_directory(info):
+        fail(f"software parent {relative} must be private to the current user with mode 0700")
+
+
+def validate_software_replace_destination(target: Path, relative: Path) -> None:
+    destination = target / relative
+    if not path_exists_no_follow(destination):
+        return
+    if relative == Path("bin") / COMMAND_NAME:
+        require_safe_executable(destination, "Qoder CLI executable")
+        return
+    if relative == Path("software") / "qoder-cli.json":
+        require_regular_file(destination, "software manifest", owner_only=True)
+        return
+    fail(f"unsupported software replace path: {relative}")
+
+
+def validate_existing_software_surface(target: Path) -> None:
+    for relative in SOFTWARE_PARENT_PATHS:
+        validate_software_parent_destination(target, relative)
+    for relative in SOFTWARE_REPLACE_PATHS:
+        validate_software_replace_destination(target, relative)
 
 
 def read_regular_file(
@@ -432,9 +576,10 @@ def lock_path(target: Path) -> Path:
 @contextlib.contextmanager
 def target_lock(target: Path) -> Iterator[None]:
     path = lock_path(target)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    require_directory(path.parent, "target parent")
     try:
         os.mkdir(path, OWNER_DIRECTORY_MODE)
+        os.chmod(path, OWNER_DIRECTORY_MODE)
     except FileExistsError:
         fail(f"target is locked: {path}")
     try:
@@ -447,7 +592,7 @@ def target_lock(target: Path) -> Iterator[None]:
 def require_explicit_absolute_target(raw_target: str | None) -> Path:
     if not raw_target:
         fail("an explicit --target absolute path is required")
-    target = Path(raw_target).expanduser()
+    target = Path(raw_target)
     if not target.is_absolute():
         fail("--target must be an absolute path")
     try:
@@ -465,10 +610,11 @@ def ensure_target_directory(target: Path) -> Path:
     if target.exists():
         info = require_directory(target, "target")
         if not is_owner_private_directory(info):
-            os.chmod(target, OWNER_DIRECTORY_MODE)
+            fail("target must be private to the current user with mode 0700")
         return target.resolve()
     require_directory(target.parent, "target parent")
     target.mkdir(mode=OWNER_DIRECTORY_MODE)
+    target.chmod(OWNER_DIRECTORY_MODE)
     return target.resolve()
 
 
@@ -520,7 +666,9 @@ def validate_managed_files(target: Path, stamp: dict[str, Any]) -> list[str]:
 def inspect_target(target: Path) -> dict[str, Any]:
     if not target.exists():
         return {"state": "missing", "target": str(target)}
-    require_directory(target, "target")
+    info = require_directory(target, "target")
+    if not is_owner_private_directory(info):
+        fail("target must be private to the current user with mode 0700")
     stamp = load_stamp(target)
     if stamp is None:
         if any_managed_path_exists(target):
@@ -546,8 +694,9 @@ def read_existing_settings_if_managed(target: Path, state: dict[str, Any]) -> di
 def current_managed_snapshot(target: Path) -> dict[Path, bytes | None]:
     snapshot: dict[Path, bytes | None] = {}
     for relative in MANAGED_PATHS:
+        validate_managed_destination(target, relative)
         path = target / relative
-        if path.exists() or path.is_symlink():
+        if path_exists_no_follow(path):
             content, _ = read_regular_file(path, f"managed file {relative}", owner_only=True)
             snapshot[relative] = content
         else:
@@ -572,14 +721,15 @@ def prune_empty_managed_dirs(target: Path) -> None:
 
 def restore_snapshot(target: Path, snapshot: dict[Path, bytes | None]) -> None:
     for relative in sorted(MANAGED_PATHS, key=lambda item: len(item.parts), reverse=True):
+        validate_managed_destination(target, relative)
         path = target / relative
-        if path.exists() or path.is_symlink():
+        if path_exists_no_follow(path):
             path.unlink()
     for relative, content in snapshot.items():
         if content is None:
             continue
         path = target / relative
-        path.parent.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
+        ensure_private_parent(path, f"managed file {relative}")
         path.write_bytes(content)
         path.chmod(OWNER_FILE_MODE)
     prune_empty_managed_dirs(target)
@@ -590,15 +740,14 @@ def replace_managed_state(
 ) -> None:
     del expected
     for relative, content in desired.items():
+        validate_managed_destination(target, relative)
         path = target / relative
-        if relative.is_absolute() or ".." in relative.parts:
-            fail(f"unsafe managed path: {relative}")
         if content is None:
-            if path.exists() or path.is_symlink():
+            if path_exists_no_follow(path):
                 require_regular_file(path, f"managed file {relative}", owner_only=True)
                 path.unlink()
             continue
-        path.parent.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
+        ensure_private_parent(path, f"managed file {relative}")
         with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
             temporary = Path(handle.name)
             handle.write(content)
@@ -611,12 +760,13 @@ def replace_managed_state(
 def changed_paths(target: Path, desired: dict[Path, bytes | None]) -> list[str]:
     changed: list[str] = []
     for relative, content in desired.items():
+        validate_managed_destination(target, relative)
         path = target / relative
         if content is None:
-            if path.exists() or path.is_symlink():
+            if path_exists_no_follow(path):
                 changed.append(str(relative))
             continue
-        if not path.exists() or path.is_symlink():
+        if not path_exists_no_follow(path):
             changed.append(str(relative))
             continue
         actual, _ = read_regular_file(path, f"managed file {relative}", owner_only=True)
@@ -849,8 +999,107 @@ def qoder_executable(target: Path) -> Path:
     return target / "bin" / f"{COMMAND_NAME}{suffix}"
 
 
+def software_presence(target: Path) -> dict[str, Any]:
+    replace_paths_present = [
+        str(relative) for relative in SOFTWARE_REPLACE_PATHS if path_exists_no_follow(target / relative)
+    ]
+    owned_parent_paths_present = [
+        str(relative) for relative in SOFTWARE_PARENT_PATHS if path_exists_no_follow(target / relative)
+    ]
+    if not replace_paths_present and not owned_parent_paths_present:
+        state = "absent"
+    elif len(replace_paths_present) == len(SOFTWARE_REPLACE_PATHS):
+        state = "installed"
+    else:
+        state = "partial"
+    return {
+        "software_state": state,
+        "partial": state == "partial",
+        "replace_paths_present": replace_paths_present,
+        "owned_parent_paths_present": owned_parent_paths_present,
+    }
+
+
+def file_sha256(path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BYTES) -> tuple[str, int]:
+    info = require_regular_file(path, label)
+    if info.st_size > max_bytes:
+        fail(f"{label} exceeds the {max_bytes}-byte size limit")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        opened = os.fstat(descriptor)
+        if identity_of(opened) != identity_of(info):
+            fail_concurrent(f"{label} changed while it was opened")
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                fail(f"{label} exceeds the {max_bytes}-byte size limit")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    final = require_regular_file(path, label)
+    expected = identity_of(info)
+    if identity_of(opened) != expected or identity_of(after) != expected or identity_of(final) != expected:
+        fail_concurrent(f"{label} changed while it was read")
+    return digest.hexdigest(), total
+
+
+def expected_software_identity(asset_key: str, asset: dict[str, Any]) -> dict[str, Any]:
+    size = asset.get("size")
+    if not isinstance(size, int) or size <= 0:
+        fail(f"baseline asset {asset_key} is missing exact size")
+    url = asset.get("url")
+    digest = asset.get("sha256")
+    if not isinstance(url, str) or not isinstance(digest, str):
+        fail(f"baseline asset {asset_key} is incomplete")
+    return {
+        "schema_version": 1,
+        "version": TESTED_VERSION,
+        "executable": f"bin/{COMMAND_NAME}",
+        "asset": asset_key,
+        "asset_size": size,
+        "asset_sha256": digest,
+        "source": url,
+        "installer": {
+            "source": "official-release-asset",
+            "reason": (
+                "The official shell installer verifies the same manifest asset but delegates to "
+                "the binary install subcommand for PATH and marker mutation; this manager uses "
+                "the verified release asset directly to keep installation target-owned."
+            ),
+        },
+    }
+
+
+def build_software_manifest(
+    root: Path,
+    *,
+    asset_key: str,
+    asset: dict[str, Any],
+) -> dict[str, Any]:
+    executable = qoder_executable(root)
+    executable_sha256, executable_size = file_sha256(
+        executable, "Qoder CLI executable", max_bytes=SOFTWARE_TREE_MAX_BYTES
+    )
+    return {
+        **expected_software_identity(asset_key, asset),
+        "executable_sha256": executable_sha256,
+        "executable_size": executable_size,
+    }
+
+
 def software_status(target: Path) -> dict[str, Any]:
-    if not target.exists():
+    if not path_exists_no_follow(target):
         return {
             "ok": True,
             "installed": False,
@@ -858,11 +1107,19 @@ def software_status(target: Path) -> dict[str, Any]:
             "target": str(target),
             "version": None,
             "executable": None,
+            "software_state": "absent",
+            "partial": False,
+            "replace_paths_present": [],
+            "owned_parent_paths_present": [],
         }
     canonical_target = require_explicit_absolute_target(str(target))
+    target_info = require_directory(canonical_target, "software target")
+    if not is_owner_private_directory(target_info):
+        fail("software target must be private to the current user with mode 0700")
+    presence = software_presence(canonical_target)
     executable = qoder_executable(canonical_target)
     manifest = software_manifest_path(canonical_target)
-    if not executable.exists() or not manifest.exists():
+    if presence["software_state"] != "installed":
         return {
             "ok": True,
             "installed": False,
@@ -870,14 +1127,23 @@ def software_status(target: Path) -> dict[str, Any]:
             "target": str(canonical_target),
             "version": None,
             "executable": str(executable),
+            **presence,
         }
-    require_regular_file(executable, "Qoder CLI executable")
-    info = load_json_object(manifest, "software manifest", owner_only=True)
-    current = (
-        info.get("schema_version") == 1
-        and info.get("version") == TESTED_VERSION
-        and info.get("executable") == f"bin/{COMMAND_NAME}"
-    )
+    try:
+        validate_existing_software_surface(canonical_target)
+        info = load_json_object(manifest, "software manifest", owner_only=True)
+        asset_key = str(info.get("asset", ""))
+        baseline = load_baseline()
+        asset = baseline.get("manifest", {}).get("files", {}).get(asset_key)
+        if not isinstance(asset, dict):
+            fail("software manifest references an unknown Qoder CLI asset")
+        expected = build_software_manifest(canonical_target, asset_key=asset_key, asset=asset)
+        current = info == expected
+        validation_error = None
+    except QoderCliSetupError as exc:
+        info = {}
+        current = False
+        validation_error = str(exc)
     return {
         "ok": True,
         "installed": True,
@@ -885,12 +1151,30 @@ def software_status(target: Path) -> dict[str, Any]:
         "target": str(canonical_target),
         "version": info.get("version"),
         "executable": str(executable),
+        **presence,
+        **({"validation_error": validation_error} if validation_error else {}),
     }
 
 
-def download_bytes(url: str) -> bytes:
+def download_asset_bytes(url: str, *, expected_size: int) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": PRODUCT_NAME})
-    with urllib.request.urlopen(request, timeout=PROCESS_TIMEOUT_SECONDS) as response:
+    try:
+        response_context = urllib.request.urlopen(request, timeout=PROCESS_TIMEOUT_SECONDS)
+    except TimeoutError:
+        fail(f"Qoder CLI download timed out: {url}")
+    except OSError as exc:
+        fail(f"Qoder CLI download failed: {exc}")
+    with response_context as response:
+        content_length = response.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except ValueError:
+                fail("Qoder CLI download returned invalid Content-Length")
+            if declared != expected_size:
+                fail(
+                    f"Qoder CLI download Content-Length mismatch: expected {expected_size}, got {declared}"
+                )
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -898,14 +1182,18 @@ def download_bytes(url: str) -> bytes:
             if not chunk:
                 break
             total += len(chunk)
-            if total > 256 * 1024 * 1024:
-                fail("Qoder CLI download exceeded the 256 MiB bound")
+            if total > SOFTWARE_DOWNLOAD_MAX_BYTES:
+                fail(f"Qoder CLI download exceeded the {SOFTWARE_DOWNLOAD_MAX_BYTES}-byte bound")
             chunks.append(chunk)
+    if total != expected_size:
+        fail(f"Qoder CLI download size mismatch: expected {expected_size}, got {total}")
     return b"".join(chunks)
 
 
 def safe_tar_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
     members = archive.getmembers()
+    if len(members) > SOFTWARE_TREE_MAX_PATHS:
+        fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_PATHS}-path limit")
     for member in members:
         path = Path(member.name)
         if path.is_absolute() or ".." in path.parts:
@@ -915,74 +1203,308 @@ def safe_tar_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
     return members
 
 
+def safe_zip_names(archive: zipfile.ZipFile) -> list[str]:
+    names = archive.namelist()
+    if len(names) > SOFTWARE_TREE_MAX_PATHS:
+        fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_PATHS}-path limit")
+    for info in archive.infolist():
+        path = Path(info.filename)
+        if path.is_absolute() or ".." in path.parts:
+            fail(f"unsafe archive member path: {info.filename}")
+        file_type = (info.external_attr >> 16) & 0o170000
+        if stat.S_ISLNK(file_type):
+            fail(f"unsafe archive member type: {info.filename}")
+    return names
+
+
+def chmod_private_tree(root: Path) -> None:
+    total_bytes = 0
+    total_paths = 0
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts)):
+        total_paths += 1
+        if total_paths > SOFTWARE_TREE_MAX_PATHS:
+            fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_PATHS}-path limit")
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            fail(f"Qoder CLI archive contains symlink: {path.relative_to(root)}")
+        if info.st_nlink != 1:
+            fail(f"Qoder CLI archive contains hard-link alias: {path.relative_to(root)}")
+        if stat.S_ISDIR(info.st_mode):
+            path.chmod(OWNER_DIRECTORY_MODE)
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            fail(f"Qoder CLI archive contains unsupported file type: {path.relative_to(root)}")
+        total_bytes += info.st_size
+        if total_bytes > SOFTWARE_TREE_MAX_BYTES:
+            fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_BYTES}-byte limit")
+        path.chmod(0o700 if stat.S_IMODE(info.st_mode) & stat.S_IXUSR else OWNER_FILE_MODE)
+
+
+def bounded_process(
+    command: list[str], *, cwd: Path, env: dict[str, str], timeout: int
+) -> subprocess.CompletedProcess[str]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        fail(f"process executable not found: {command[0]}")
+    except subprocess.TimeoutExpired:
+        fail(f"process timed out after {timeout} seconds: {command[0]}")
+    if len(completed.stdout) > PROCESS_OUTPUT_MAX_BYTES or len(completed.stderr) > PROCESS_OUTPUT_MAX_BYTES:
+        fail(f"process output exceeded the {PROCESS_OUTPUT_MAX_BYTES}-byte limit: {command[0]}")
+    return completed
+
+
+def stage_probe_environment(stage: Path) -> dict[str, str]:
+    home = stage / "probe-home"
+    tmp = stage / "probe-tmp"
+    for directory in (home, tmp):
+        directory.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
+        directory.chmod(OWNER_DIRECTORY_MODE)
+    return {
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "QODER_HOME": str(home),
+        "QODER_AUTO_UPDATE": "false",
+        "TMPDIR": str(tmp),
+    }
+
+
+def probe_staged_binary(executable: Path, stage: Path) -> None:
+    require_safe_executable(executable, "staged Qoder CLI executable")
+    completed = bounded_process(
+        [str(executable), "--version"],
+        cwd=stage,
+        env=stage_probe_environment(stage),
+        timeout=PROCESS_TIMEOUT_SECONDS,
+    )
+    if completed.returncode != 0:
+        fail(f"staged Qoder CLI version probe failed with exit {completed.returncode}")
+    output = "\n".join((completed.stdout, completed.stderr))
+    if TESTED_VERSION not in output:
+        fail(f"staged Qoder CLI reported an unexpected version: {output.strip()!r}")
+
+
+def extract_archive(archive_path: Path, unpacked: Path) -> None:
+    unpacked.mkdir(mode=OWNER_DIRECTORY_MODE)
+    if archive_path.name.endswith(".zip"):
+        with zipfile.ZipFile(archive_path) as archive:
+            archive.extractall(unpacked, members=safe_zip_names(archive))
+    else:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            for member in safe_tar_members(archive):
+                destination = unpacked / member.name
+                if member.isdir():
+                    destination.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
+                    continue
+                if not member.isfile():
+                    fail(f"unsafe archive member type: {member.name}")
+                ensure_private_parent(destination, f"archive member {member.name}")
+                source = archive.extractfile(member)
+                if source is None:
+                    fail(f"cannot extract archive member: {member.name}")
+                with source, destination.open("wb") as handle:
+                    shutil.copyfileobj(source, handle)
+                destination.chmod(0o700 if member.mode & stat.S_IXUSR else OWNER_FILE_MODE)
+    chmod_private_tree(unpacked)
+
+
+def find_extracted_binary(unpacked: Path) -> Path:
+    for candidate in sorted(unpacked.rglob("*")):
+        if candidate.name in {COMMAND_NAME, f"{COMMAND_NAME}.exe"} and candidate.is_file():
+            require_safe_executable(candidate, "extracted Qoder CLI executable")
+            return candidate
+    fail("Qoder CLI archive did not contain a qodercli executable")
+
+
+def build_live_stage(staging: Path, asset_key: str, asset: dict[str, Any]) -> Path:
+    url = asset.get("url")
+    expected_sha = asset.get("sha256")
+    expected_size = asset.get("size")
+    if not isinstance(url, str) or not isinstance(expected_sha, str) or not isinstance(expected_size, int):
+        fail(f"baseline asset {asset_key} is incomplete")
+    archive_bytes = download_asset_bytes(url, expected_size=expected_size)
+    actual_sha = sha256_bytes(archive_bytes)
+    if actual_sha != expected_sha:
+        fail(f"downloaded Qoder CLI digest mismatch for {asset_key}")
+    archive_path = staging / Path(url).name
+    archive_path.write_bytes(archive_bytes)
+    archive_path.chmod(OWNER_FILE_MODE)
+    unpacked = staging / "unpacked"
+    extract_archive(archive_path, unpacked)
+    binary_source = find_extracted_binary(unpacked)
+    live = staging / "live"
+    (live / "bin").mkdir(mode=OWNER_DIRECTORY_MODE, parents=True)
+    (live / "software").mkdir(mode=OWNER_DIRECTORY_MODE, parents=True)
+    staged_executable = live / "bin" / COMMAND_NAME
+    shutil.copy2(binary_source, staged_executable)
+    staged_executable.chmod(0o700)
+    probe_staged_binary(staged_executable, staging)
+    manifest = build_software_manifest(live, asset_key=asset_key, asset=asset)
+    software_manifest_path(live).write_bytes(canonical_json(manifest))
+    software_manifest_path(live).chmod(OWNER_FILE_MODE)
+    return live
+
+
+def cleanup_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def move_replace_path(source: Path, destination: Path) -> None:
+    ensure_private_parent(destination, f"software destination {destination}")
+    os.replace(source, destination)
+
+
+def restore_software_paths(
+    target: Path,
+    hold: Path,
+    *,
+    moved_old: list[Path],
+    installed_new: list[Path],
+    preexisting_parent_paths: set[Path],
+) -> None:
+    for relative in reversed(installed_new):
+        destination = target / relative
+        if path_exists_no_follow(destination):
+            cleanup_path(destination)
+    for relative in reversed(moved_old):
+        saved = hold / relative
+        if path_exists_no_follow(saved):
+            move_replace_path(saved, target / relative)
+    for relative in sorted(SOFTWARE_PARENT_PATHS, key=lambda item: len(item.parts), reverse=True):
+        if relative in preexisting_parent_paths:
+            continue
+        parent = target / relative
+        if not parent.exists() or parent.is_symlink() or not parent.is_dir():
+            continue
+        with contextlib.suppress(OSError):
+            parent.rmdir()
+
+
+def replace_software_state(target: Path, live_stage: Path) -> None:
+    for relative in SOFTWARE_REPLACE_PATHS:
+        validate_software_replace_destination(live_stage, relative)
+        validate_software_replace_destination(target, relative)
+    hold = Path(tempfile.mkdtemp(dir=target.parent, prefix=f".{target.name}.nddev-qoder-cli-hold."))
+    hold.chmod(OWNER_DIRECTORY_MODE)
+    preexisting_parent_paths = {
+        relative for relative in SOFTWARE_PARENT_PATHS if path_exists_no_follow(target / relative)
+    }
+    moved_old: list[Path] = []
+    installed_new: list[Path] = []
+    try:
+        for relative in SOFTWARE_REPLACE_PATHS:
+            destination = target / relative
+            if path_exists_no_follow(destination):
+                saved = hold / relative
+                ensure_private_parent(saved, f"rollback path {saved}")
+                os.replace(destination, saved)
+                moved_old.append(relative)
+        for relative in SOFTWARE_REPLACE_PATHS:
+            move_replace_path(live_stage / relative, target / relative)
+            installed_new.append(relative)
+        status = software_status(target)
+        if not status["installed"] or not status["current"]:
+            detail = f": {status['validation_error']}" if "validation_error" in status else ""
+            fail(f"installed Qoder CLI failed validation{detail}")
+    except BaseException:
+        restore_software_paths(
+            target,
+            hold,
+            moved_old=moved_old,
+            installed_new=installed_new,
+            preexisting_parent_paths=preexisting_parent_paths,
+        )
+        raise
+    finally:
+        shutil.rmtree(hold, ignore_errors=True)
+
+
+def remove_created_target_if_empty(target: Path, existed_before: bool) -> None:
+    if existed_before:
+        return
+    try:
+        if target.exists() and target.is_dir() and not any(target.iterdir()):
+            target.rmdir()
+    except OSError:
+        pass
+
+
 def install_or_update_cli(target: Path, *, operation: str) -> dict[str, Any]:
-    canonical_target = ensure_target_directory(target)
+    existed_before = path_exists_no_follow(target)
+    preflight = software_status(target)
+    if operation == "install-cli":
+        if preflight.get("replace_paths_present") or preflight.get("owned_parent_paths_present"):
+            validate_existing_software_surface(require_explicit_absolute_target(str(target)))
+            fail("Qoder CLI software already exists at target; use update-cli")
+    elif operation == "update-cli":
+        if preflight["software_state"] == "absent":
+            fail("Qoder CLI is not installed at the selected target; use install-cli")
+        validate_existing_software_surface(require_explicit_absolute_target(str(target)))
+        if preflight["installed"] and preflight["current"]:
+            return {
+                "ok": True,
+                "operation": operation,
+                "target": str(require_explicit_absolute_target(str(target))),
+                "changed": False,
+                "version": preflight["version"],
+                "executable": preflight["executable"],
+            }
+    else:
+        fail(f"unsupported software operation: {operation}")
+    canonical_target = target.resolve() if path_exists_no_follow(target) else target
     with target_lock(canonical_target):
         asset_key, asset = detect_platform_asset()
-        url = asset.get("url")
-        expected_sha = asset.get("sha256")
-        if not isinstance(url, str) or not isinstance(expected_sha, str):
-            fail(f"baseline asset {asset_key} is incomplete")
-        archive_bytes = download_bytes(url)
-        actual_sha = sha256_bytes(archive_bytes)
-        if actual_sha != expected_sha:
-            fail(f"downloaded Qoder CLI digest mismatch for {asset_key}")
-        staging = (
-            canonical_target.parent / f".{canonical_target.name}.nddev-qoder-cli-software-stage"
+        staging = Path(
+            tempfile.mkdtemp(dir=target.parent, prefix=f".{target.name}.nddev-qoder-cli-stage.")
         )
-        if staging.exists():
-            shutil.rmtree(staging)
-        staging.mkdir(mode=OWNER_DIRECTORY_MODE)
+        staging.chmod(OWNER_DIRECTORY_MODE)
         try:
-            archive_path = staging / Path(url).name
-            archive_path.write_bytes(archive_bytes)
-            unpacked = staging / "unpacked"
-            if archive_path.name.endswith(".zip"):
-                with zipfile.ZipFile(archive_path) as archive:
-                    for name in archive.namelist():
-                        path = Path(name)
-                        if path.is_absolute() or ".." in path.parts:
-                            fail(f"unsafe archive member path: {name}")
-                    archive.extractall(unpacked)
-            else:
-                with tarfile.open(archive_path, "r:gz") as archive:
-                    archive.extractall(unpacked, members=safe_tar_members(archive))
-            binary_source: Path | None = None
-            for candidate in unpacked.rglob("*"):
-                if candidate.name in {COMMAND_NAME, f"{COMMAND_NAME}.exe"} and candidate.is_file():
-                    binary_source = candidate
-                    break
-            if binary_source is None:
-                fail(f"archive {archive_path.name} did not contain a Qoder CLI executable")
-            bin_dir = canonical_target / "bin"
-            bin_dir.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
-            executable = qoder_executable(canonical_target)
-            temporary = bin_dir / f".{executable.name}.tmp"
-            shutil.copy2(binary_source, temporary)
-            temporary.chmod(0o700)
-            os.replace(temporary, executable)
-            manifest = {
-                "schema_version": 1,
-                "version": TESTED_VERSION,
-                "executable": f"bin/{COMMAND_NAME}",
-                "asset": asset_key,
-                "sha256": expected_sha,
-                "source": url,
-            }
-            software_manifest_path(canonical_target).parent.mkdir(
-                mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True
-            )
-            software_manifest_path(canonical_target).write_bytes(canonical_json(manifest))
-            software_manifest_path(canonical_target).chmod(OWNER_FILE_MODE)
+            live_stage = build_live_stage(staging, asset_key, asset)
+            canonical_target = ensure_target_directory(target)
+            status = software_status(canonical_target)
+            if operation == "install-cli" and (
+                status.get("replace_paths_present") or status.get("owned_parent_paths_present")
+            ):
+                fail("Qoder CLI software already exists at target; use update-cli")
+            if operation == "update-cli":
+                if status["software_state"] == "absent":
+                    fail("Qoder CLI is not installed at the selected target; use install-cli")
+                validate_existing_software_surface(canonical_target)
+                if status["installed"] and status["current"]:
+                    return {
+                        "ok": True,
+                        "operation": operation,
+                        "target": str(canonical_target),
+                        "changed": False,
+                        "version": status["version"],
+                        "executable": status["executable"],
+                    }
+            replace_software_state(canonical_target, live_stage)
         finally:
+            remove_created_target_if_empty(target, existed_before)
             shutil.rmtree(staging, ignore_errors=True)
+    status = software_status(canonical_target)
     return {
         "ok": True,
         "operation": operation,
         "target": str(canonical_target),
+        "changed": True,
         "version": TESTED_VERSION,
         "asset": asset_key,
-        "executable": str(qoder_executable(canonical_target)),
+        "executable": status["executable"],
     }
 
 
@@ -994,10 +1516,10 @@ def isolated_child_environment(target: Path) -> dict[str, str]:
         directory.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
         directory.chmod(OWNER_DIRECTORY_MODE)
     env: dict[str, str] = {}
-    for name, value in os.environ.items():
-        if name in TOKEN_ENV_NAMES:
-            continue
-        env[name] = value
+    for name in ("LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR", "CI"):
+        value = os.environ.get(name)
+        if value:
+            env[name] = value
     env.update(
         {
             "HOME": str(home),
@@ -1008,30 +1530,71 @@ def isolated_child_environment(target: Path) -> dict[str, str]:
             "XDG_CONFIG_HOME": str(runtime / "xdg-config"),
             "XDG_CACHE_HOME": str(runtime / "xdg-cache"),
             "XDG_STATE_HOME": str(runtime / "xdg-state"),
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         }
     )
     return env
 
 
+def forbidden_launch_option(argument: str) -> str | None:
+    if argument == "--":
+        return None
+    option = argument.split("=", 1)[0]
+    if option in FORBIDDEN_LAUNCH_ARGS:
+        return option
+    if option.startswith("--no-") and f"--{option[5:]}" in FORBIDDEN_LAUNCH_ARGS:
+        return option
+    if option.startswith("-") and not option.startswith("--"):
+        forbidden_shorts = {short[1:] for short in FORBIDDEN_LAUNCH_SHORT_ARGS}
+        for character in option[1:]:
+            if character in forbidden_shorts:
+                return f"-{character}"
+    return None
+
+
+def normalize_launch_arguments(args: list[str]) -> list[str]:
+    forwarded = list(args)
+    if forwarded and forwarded[0] == "--":
+        forwarded = forwarded[1:]
+    for argument in forwarded:
+        option = forbidden_launch_option(argument)
+        if option is not None:
+            fail(
+                "launch argument is managed by nddev-qoder-cli-app and cannot be "
+                f"overridden: {option}"
+            )
+    return forwarded
+
+
 def launch_qoder(target: Path, args: list[str]) -> int:
     canonical_target = require_explicit_absolute_target(str(target))
-    state = inspect_target(canonical_target)
-    if state["state"] != "managed":
-        fail("target is not managed by nddev-qoder-cli-app")
-    status = software_status(canonical_target)
-    if not status["installed"] or not status["current"]:
-        fail("Qoder CLI is not installed at the tested version in this target")
-    child_args = (
-        list(state["launch_args"]) + ["--settings", str(canonical_target / "settings.json")] + args
-    )
-    completed = subprocess.run(
-        [str(qoder_executable(canonical_target)), *child_args],
-        cwd=os.getcwd(),
-        env=isolated_child_environment(canonical_target),
-        check=False,
-        timeout=None,
-    )
+    forwarded = normalize_launch_arguments(args)
+    with target_lock(canonical_target):
+        state = inspect_target(canonical_target)
+        if state["state"] != "managed":
+            fail("target is not managed by nddev-qoder-cli-app")
+        status = software_status(canonical_target)
+        if not status["installed"] or not status["current"]:
+            fail("Qoder CLI is not installed at the tested version in this target")
+        command = [
+            str(qoder_executable(canonical_target)),
+            *list(state["launch_args"]),
+            "--settings",
+            str(canonical_target / "settings.json"),
+            *forwarded,
+        ]
+        env = isolated_child_environment(canonical_target)
+        cwd = os.getcwd()
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            check=False,
+            timeout=None,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        fail("target-owned qodercli executable disappeared before launch")
     return int(completed.returncode)
 
 

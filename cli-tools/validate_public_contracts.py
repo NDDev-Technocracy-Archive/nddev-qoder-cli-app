@@ -110,29 +110,72 @@ def validate_versions(errors: list[str]) -> None:
                 f"{owner} baseline ref mismatch",
                 errors,
             )
+    for owner, software in (
+        ("manifest", manifest.get("software_install")),
+        ("contract", contract.get("software_install")),
+    ):
+        require(isinstance(software, dict), f"{owner} software_install missing", errors)
+        if isinstance(software, dict):
+            installer = software.get("installer_evidence", {})
+            bounds = software.get("bounds", {})
+            require(
+                installer.get("sha256")
+                == "f26997301e5cf1ecff7378ffa25714ef0caf743a53f23530fdc61d4f08caaec2",
+                f"{owner} installer evidence digest mismatch",
+                errors,
+            )
+            require(installer.get("size") == 10652, f"{owner} installer size mismatch", errors)
+            require(
+                software.get("status_executes_binary") is False,
+                f"{owner} software-status must not execute binary",
+                errors,
+            )
+            require(
+                software.get("stage_version_probe") is True,
+                f"{owner} stage version probe missing",
+                errors,
+            )
+            require(software.get("target_owned") is True, f"{owner} target ownership missing", errors)
+            require(
+                bounds == {
+                    "max_download_bytes": 268435456,
+                    "max_tree_bytes": 536870912,
+                    "max_tree_paths": 5000,
+                },
+                f"{owner} software bounds mismatch",
+                errors,
+            )
 
 
 def validate_assets(errors: list[str]) -> None:
     baseline = read_json("references/qoder-cli-baseline.json")
+    installer = baseline.get("install_script", {})
+    require(
+        installer.get("sha256") == "f26997301e5cf1ecff7378ffa25714ef0caf743a53f23530fdc61d4f08caaec2",
+        "installer digest mismatch",
+        errors,
+    )
+    require(installer.get("size") == 10652, "installer size mismatch", errors)
     files = baseline.get("manifest", {}).get("files")
     require(isinstance(files, dict), "baseline files missing", errors)
     expected = {
-        "darwin-arm64": "48b220d90ba69462b24fb214a5cf1ecc9e3d4785e7d8e32e63ceb9ca739b9d8a",
-        "darwin-amd64": "9c72803f4c883af971b43c968023b925f8c085e79672ac2c66d8a65e80a571d4",
-        "linux-arm64": "ad5ed775e8719781df40add6b815f7c823bbe1640dcba45d846145b8c8d8b88d",
-        "linux-arm64-musl": "2ea1b1edc121bc747e88f9bdf6740622db18035768b7033f5ed6b5d659e9d6fb",
-        "linux-amd64": "72f4b210bf6a9f854e7dc85dba1bddc935eae4f1efff41da1ced0bf330ae2dee",
-        "linux-amd64-baseline": "2ee5797c634dc2277a16b64cc5f1faf855c3d2ee497bb86c18e449803a4d3328",
-        "linux-amd64-musl": "90ff9351c24a45787450551bdbb6352e4d9ad16299be84021729f9e2d0e6945f",
-        "windows-amd64": "f0970f29e525b18e3be67ea4692ec2dde073f65a95eec9ad0b81e07b32d1b62c",
-        "windows-amd64-legacy": "ed160f0075a8ac048ea34a6e92ed047739957c4bca8020821cb2bfe3c521fc9e",
+        "darwin-arm64": ("48b220d90ba69462b24fb214a5cf1ecc9e3d4785e7d8e32e63ceb9ca739b9d8a", 37716918),
+        "darwin-amd64": ("9c72803f4c883af971b43c968023b925f8c085e79672ac2c66d8a65e80a571d4", 41711896),
+        "linux-arm64": ("ad5ed775e8719781df40add6b815f7c823bbe1640dcba45d846145b8c8d8b88d", 49845139),
+        "linux-arm64-musl": ("2ea1b1edc121bc747e88f9bdf6740622db18035768b7033f5ed6b5d659e9d6fb", 48537619),
+        "linux-amd64": ("72f4b210bf6a9f854e7dc85dba1bddc935eae4f1efff41da1ced0bf330ae2dee", 50417468),
+        "linux-amd64-baseline": ("2ee5797c634dc2277a16b64cc5f1faf855c3d2ee497bb86c18e449803a4d3328", 50043332),
+        "linux-amd64-musl": ("90ff9351c24a45787450551bdbb6352e4d9ad16299be84021729f9e2d0e6945f", 49176709),
+        "windows-amd64": ("f0970f29e525b18e3be67ea4692ec2dde073f65a95eec9ad0b81e07b32d1b62c", 59903461),
+        "windows-amd64-legacy": ("ed160f0075a8ac048ea34a6e92ed047739957c4bca8020821cb2bfe3c521fc9e", 55343806),
     }
     if isinstance(files, dict):
-        for key, digest in expected.items():
+        for key, (digest, size) in expected.items():
             asset = files.get(key)
             require(isinstance(asset, dict), f"asset missing: {key}", errors)
             if isinstance(asset, dict):
                 require(asset.get("sha256") == digest, f"asset digest mismatch: {key}", errors)
+                require(asset.get("size") == size, f"asset size mismatch: {key}", errors)
                 require(
                     str(asset.get("url", "")).startswith(
                         "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/"
@@ -199,6 +242,7 @@ def validate_builder(errors: list[str]) -> None:
     build = read_json("build/version.json")
     contract = read_json("config/nddev-contract.json")
     plugin = read_json("plugins/nddev-builder/.qoder-plugin/plugin.json")
+    hooks = read_json("plugins/nddev-builder/hooks/hooks.json")
     builder = contract.get("builder_capability")
     require(plugin.get("name") == "nddev-builder", "builder name mismatch", errors)
     require(
@@ -209,6 +253,8 @@ def validate_builder(errors: list[str]) -> None:
     require(plugin.get("skills") == "skills", "builder skills path mismatch", errors)
     require(plugin.get("agents") == "agents", "builder agents path mismatch", errors)
     require(plugin.get("hooks") == "hooks/hooks.json", "builder hooks path mismatch", errors)
+    require(isinstance(hooks.get("hooks"), dict), "builder hooks must use Qoder hook object", errors)
+    require("Stop" in hooks.get("hooks", {}), "builder Stop hook missing", errors)
     require(isinstance(builder, dict), "contract builder missing", errors)
     if isinstance(builder, dict):
         require(

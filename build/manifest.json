@@ -98,9 +98,23 @@
     "tested_version": "1.1.5",
     "supported_platforms": ["macos", "linux", "windows"],
     "source": "official Qoder CLI manifest and release assets",
+    "installer_evidence": {
+      "url": "https://qoder.com/install",
+      "sha256": "f26997301e5cf1ecff7378ffa25714ef0caf743a53f23530fdc61d4f08caaec2",
+      "size": 10652,
+      "direct_asset_reason": "The installer verifies the manifest asset then delegates final placement and PATH mutation to qodercli install; this manager uses the verified release asset directly for target-owned installation."
+    },
     "layout": {
       "visible_command": "bin/qodercli",
       "software_manifest": "software/qoder-cli.json"
+    },
+    "status_executes_binary": false,
+    "stage_version_probe": true,
+    "target_owned": true,
+    "bounds": {
+      "max_download_bytes": 268435456,
+      "max_tree_bytes": 536870912,
+      "max_tree_paths": 5000
     },
     "commands": {
       "status": "python3 cli-tools/nddev_qoder_cli.py software-status --target <absolute-target> [--json]",

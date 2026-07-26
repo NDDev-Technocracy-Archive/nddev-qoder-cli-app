@@ -32,8 +32,12 @@ python3 cli-tools/nddev_qoder_cli.py launch --target /absolute/qoder-home -- --h
 ```
 
 `install-cli` downloads the current tested Qoder release asset for the local
-platform, checks its SHA-256 digest against the baseline, and installs only into
-`<target>/bin/qodercli`.
+platform, enforces the exact `Content-Length`, byte size, and SHA-256 digest
+from the baseline, probes only the staged binary with `--version`, and installs
+only into `<target>/bin/qodercli`. The official `https://qoder.com/install`
+script is pinned as evidence in the baseline; this manager uses the verified
+manifest release asset directly because the shell installer delegates final
+placement and PATH mutation to `qodercli install`.
 
 ## Setup variants
 
@@ -52,6 +56,8 @@ contract.
 - explicit absolute `--target` is required for every target operation;
 - target symlinks and managed symlinks/hard links fail closed;
 - reads are size bounded;
+- archive extraction rejects traversal, symlinks, hard links, device nodes,
+  unsafe modes, and oversized trees;
 - state stamps and backup envelopes bind to the canonical target;
 - ten rotating target-bound backups are retained;
 - unmanaged target files and co-owned settings keys are preserved;
