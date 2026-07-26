@@ -60,7 +60,11 @@ def validate_versions(errors: list[str]) -> None:
     require(manifest.get("build_version") == version, "manifest version mismatch", errors)
     require(PLACEHOLDER_MARKER not in contract, "contract contains placeholder marker", errors)
     require(build.get("qoder_cli_tested") == EXPECTED["version"], "tested version mismatch", errors)
-    require(build.get("qoder_cli_published_at") == EXPECTED["published_at"], "published_at mismatch", errors)
+    require(
+        build.get("qoder_cli_published_at") == EXPECTED["published_at"],
+        "published_at mismatch",
+        errors,
+    )
     require(build.get("command") == EXPECTED["command"], "command mismatch", errors)
     require(build.get("npm_package") == EXPECTED["npm_package"], "package mismatch", errors)
     manifest_baseline = baseline.get("manifest")
@@ -68,18 +72,45 @@ def validate_versions(errors: list[str]) -> None:
     require(isinstance(manifest_baseline, dict), "baseline manifest missing", errors)
     require(isinstance(npm, dict), "baseline npm missing", errors)
     if isinstance(manifest_baseline, dict):
-        require(manifest_baseline.get("latest") == build.get("qoder_cli_tested"), "baseline latest mismatch", errors)
-        require(manifest_baseline.get("published_at") == build.get("qoder_cli_published_at"), "baseline published_at mismatch", errors)
+        require(
+            manifest_baseline.get("latest") == build.get("qoder_cli_tested"),
+            "baseline latest mismatch",
+            errors,
+        )
+        require(
+            manifest_baseline.get("published_at") == build.get("qoder_cli_published_at"),
+            "baseline published_at mismatch",
+            errors,
+        )
     if isinstance(npm, dict):
         require(npm.get("package") == build.get("npm_package"), "baseline package mismatch", errors)
-        require(npm.get("version") == build.get("qoder_cli_tested"), "baseline package version mismatch", errors)
+        require(
+            npm.get("version") == build.get("qoder_cli_tested"),
+            "baseline package version mismatch",
+            errors,
+        )
         require(npm.get("binary") == build.get("command"), "baseline command mismatch", errors)
-    for owner, runtime in (("manifest", manifest.get("runtime_compatibility")), ("contract", contract.get("runtime_compatibility"))):
+    for owner, runtime in (
+        ("manifest", manifest.get("runtime_compatibility")),
+        ("contract", contract.get("runtime_compatibility")),
+    ):
         require(isinstance(runtime, dict), f"{owner} runtime_compatibility missing", errors)
         if isinstance(runtime, dict):
-            require(runtime.get("tested_version") == build.get("qoder_cli_tested"), f"{owner} tested version mismatch", errors)
-            require(runtime.get("npm_package") == build.get("npm_package"), f"{owner} package mismatch", errors)
-            require(runtime.get("baseline_ref") == build.get("runtime_baseline_ref"), f"{owner} baseline ref mismatch", errors)
+            require(
+                runtime.get("tested_version") == build.get("qoder_cli_tested"),
+                f"{owner} tested version mismatch",
+                errors,
+            )
+            require(
+                runtime.get("npm_package") == build.get("npm_package"),
+                f"{owner} package mismatch",
+                errors,
+            )
+            require(
+                runtime.get("baseline_ref") == build.get("runtime_baseline_ref"),
+                f"{owner} baseline ref mismatch",
+                errors,
+            )
 
 
 def validate_assets(errors: list[str]) -> None:
@@ -103,7 +134,13 @@ def validate_assets(errors: list[str]) -> None:
             require(isinstance(asset, dict), f"asset missing: {key}", errors)
             if isinstance(asset, dict):
                 require(asset.get("sha256") == digest, f"asset digest mismatch: {key}", errors)
-                require(str(asset.get("url", "")).startswith("https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/"), f"asset URL mismatch: {key}", errors)
+                require(
+                    str(asset.get("url", "")).startswith(
+                        "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/"
+                    ),
+                    f"asset URL mismatch: {key}",
+                    errors,
+                )
 
 
 def validate_setups(errors: list[str]) -> None:
@@ -119,14 +156,44 @@ def validate_setups(errors: list[str]) -> None:
         metadata = read_json(f"setups/{setup_id}/setup.json")
         settings = read_json(f"setups/{setup_id}/settings.json")
         require(metadata.get("id") == setup_id, f"{setup_id} id mismatch", errors)
-        require(metadata.get("launch_args") == LAUNCH_ARGS[setup_id], f"{setup_id} launch args mismatch", errors)
-        require(metadata.get("builder_default_on") is True, f"{setup_id} builder not default-on", errors)
-        require(metadata.get("builder_projection") == "native-plugin-plus-user-files", f"{setup_id} builder projection mismatch", errors)
-        require(settings.get("general", {}).get("enableAutoUpdate") is False, f"{setup_id} update must be disabled", errors)
-        require(settings.get("enabledPlugins") == {"nddev-builder@local": True}, f"{setup_id} builder plugin must be enabled", errors)
-        require(settings.get("extraKnownMarketplaces") == {}, f"{setup_id} marketplace must be empty", errors)
-        require(settings.get("sandbox", {}).get("gitAuth") is False, f"{setup_id} git auth must be off", errors)
-        require(settings.get("sandbox", {}).get("ghAuth") is False, f"{setup_id} gh auth must be off", errors)
+        require(
+            metadata.get("launch_args") == LAUNCH_ARGS[setup_id],
+            f"{setup_id} launch args mismatch",
+            errors,
+        )
+        require(
+            metadata.get("builder_default_on") is True, f"{setup_id} builder not default-on", errors
+        )
+        require(
+            metadata.get("builder_projection") == "native-plugin-plus-user-files",
+            f"{setup_id} builder projection mismatch",
+            errors,
+        )
+        require(
+            settings.get("general", {}).get("enableAutoUpdate") is False,
+            f"{setup_id} update must be disabled",
+            errors,
+        )
+        require(
+            settings.get("enabledPlugins") == {"nddev-builder@local": True},
+            f"{setup_id} builder plugin must be enabled",
+            errors,
+        )
+        require(
+            settings.get("extraKnownMarketplaces") == {},
+            f"{setup_id} marketplace must be empty",
+            errors,
+        )
+        require(
+            settings.get("sandbox", {}).get("gitAuth") is False,
+            f"{setup_id} git auth must be off",
+            errors,
+        )
+        require(
+            settings.get("sandbox", {}).get("ghAuth") is False,
+            f"{setup_id} gh auth must be off",
+            errors,
+        )
 
 
 def validate_builder(errors: list[str]) -> None:
@@ -135,13 +202,21 @@ def validate_builder(errors: list[str]) -> None:
     plugin = read_json("plugins/nddev-builder/.qoder-plugin/plugin.json")
     builder = contract.get("builder_capability")
     require(plugin.get("name") == "nddev-builder", "builder name mismatch", errors)
-    require(plugin.get("version") == build.get("nddev_builder_plugin_version"), "builder version mismatch", errors)
+    require(
+        plugin.get("version") == build.get("nddev_builder_plugin_version"),
+        "builder version mismatch",
+        errors,
+    )
     require(plugin.get("skills") == "skills", "builder skills path mismatch", errors)
     require(plugin.get("agents") == "agents", "builder agents path mismatch", errors)
     require(plugin.get("hooks") == "hooks/hooks.json", "builder hooks path mismatch", errors)
     require(isinstance(builder, dict), "contract builder missing", errors)
     if isinstance(builder, dict):
-        require(builder.get("projection") == "qoder-native-plugin-user-files", "builder projection mismatch", errors)
+        require(
+            builder.get("projection") == "qoder-native-plugin-user-files",
+            "builder projection mismatch",
+            errors,
+        )
         require(builder.get("default_on") is True, "builder default_on mismatch", errors)
         require(builder.get("marketplace") is None, "builder marketplace must be null", errors)
     for relative in (

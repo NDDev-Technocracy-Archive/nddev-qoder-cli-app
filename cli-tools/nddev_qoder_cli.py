@@ -247,7 +247,9 @@ def load_json_object(path: Path, label: str, *, owner_only: bool = False) -> dic
 def require_exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
     actual = set(value)
     if actual != expected:
-        fail(f"{label} has invalid keys (missing={sorted(expected - actual)}, extra={sorted(actual - expected)})")
+        fail(
+            f"{label} has invalid keys (missing={sorted(expected - actual)}, extra={sorted(actual - expected)})"
+        )
 
 
 def validate_setup_id(setup_id: str) -> None:
@@ -259,7 +261,9 @@ def managed_settings_view(settings: dict[str, Any]) -> dict[str, Any]:
     return {key: settings[key] for key in MANAGED_SETTINGS_KEYS if key in settings}
 
 
-def merge_settings(existing: dict[str, Any] | None, setup_settings: dict[str, Any]) -> dict[str, Any]:
+def merge_settings(
+    existing: dict[str, Any] | None, setup_settings: dict[str, Any]
+) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if existing is not None:
         for key, value in existing.items():
@@ -280,16 +284,29 @@ def validate_settings(settings: dict[str, Any], label: str) -> None:
     general = settings.get("general")
     permissions = settings.get("permissions")
     sandbox = settings.get("sandbox")
-    if not isinstance(general, dict) or general.get("defaultPermissionMode") not in {"default", "accept_edits", "auto", "bypass_permissions", "dont_ask"}:
+    if not isinstance(general, dict) or general.get("defaultPermissionMode") not in {
+        "default",
+        "accept_edits",
+        "auto",
+        "bypass_permissions",
+        "dont_ask",
+    }:
         fail(f"{label} has invalid general.defaultPermissionMode")
     if general.get("enableAutoUpdate") is not False:
         fail(f"{label} must disable automatic update")
     if not isinstance(permissions, dict):
         fail(f"{label} has invalid permissions")
     for key in ("allow", "ask", "deny"):
-        if key in permissions and (not isinstance(permissions[key], list) or not all(isinstance(item, str) for item in permissions[key])):
+        if key in permissions and (
+            not isinstance(permissions[key], list)
+            or not all(isinstance(item, str) for item in permissions[key])
+        ):
             fail(f"{label} permissions.{key} must be a string array")
-    if not isinstance(sandbox, dict) or sandbox.get("gitAuth") is not False or sandbox.get("ghAuth") is not False:
+    if (
+        not isinstance(sandbox, dict)
+        or sandbox.get("gitAuth") is not False
+        or sandbox.get("ghAuth") is not False
+    ):
         fail(f"{label} must disable sandbox git/gh auth")
     if settings.get("enabledPlugins") != {"nddev-builder@local": True}:
         fail(f"{label} must enable nddev-builder@local")
@@ -298,35 +315,60 @@ def validate_settings(settings: dict[str, Any], label: str) -> None:
 
 
 def validate_setup_metadata(metadata: dict[str, Any], setup_id: str) -> None:
-    require_exact_keys(metadata, {"schema_version", "id", "description", "managed_files", "builder_projection", "builder_default_on", "launch_args"}, f"setup {setup_id} metadata")
+    require_exact_keys(
+        metadata,
+        {
+            "schema_version",
+            "id",
+            "description",
+            "managed_files",
+            "builder_projection",
+            "builder_default_on",
+            "launch_args",
+        },
+        f"setup {setup_id} metadata",
+    )
     if metadata["schema_version"] != 1:
         fail(f"setup {setup_id} metadata has unsupported schema")
     if metadata["id"] != setup_id:
         fail(f"setup {setup_id} metadata identity mismatch")
     if metadata["managed_files"] != ["settings.json", "AGENTS.md"]:
         fail(f"setup {setup_id} managed file declaration is invalid")
-    if metadata["builder_projection"] != "native-plugin-plus-user-files" or metadata["builder_default_on"] is not True:
+    if (
+        metadata["builder_projection"] != "native-plugin-plus-user-files"
+        or metadata["builder_default_on"] is not True
+    ):
         fail(f"setup {setup_id} must enable native builder projection")
-    if not isinstance(metadata["launch_args"], list) or not all(isinstance(item, str) for item in metadata["launch_args"]):
+    if not isinstance(metadata["launch_args"], list) or not all(
+        isinstance(item, str) for item in metadata["launch_args"]
+    ):
         fail(f"setup {setup_id} launch_args must be a string array")
 
 
 def render_builder_files() -> dict[Path, bytes]:
     files: dict[Path, bytes] = {}
     for source_relative, target_relative in BUILDER_SOURCE_FILES:
-        content, _ = read_regular_file(BUILDER_ROOT / source_relative, f"builder source {source_relative}")
+        content, _ = read_regular_file(
+            BUILDER_ROOT / source_relative, f"builder source {source_relative}"
+        )
         files[target_relative] = content
     return files
 
 
-def build_stamp(setup_id: str, desired: dict[Path, bytes], launch_args: list[str]) -> dict[str, Any]:
+def build_stamp(
+    setup_id: str, desired: dict[Path, bytes], launch_args: list[str]
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "product_name": PRODUCT_NAME,
         "build_version": VERSION,
         "setup_id": setup_id,
         "canonical_target": "",
-        "managed_files": {str(relative): managed_digest(relative, content) for relative, content in desired.items() if relative != Path(STAMP_NAME)},
+        "managed_files": {
+            str(relative): managed_digest(relative, content)
+            for relative, content in desired.items()
+            if relative != Path(STAMP_NAME)
+        },
         "builder_projection": "qoder-native-plugin-user-files",
         "launch_args": launch_args,
     }
@@ -338,7 +380,9 @@ def bind_stamp(stamp: dict[str, Any], canonical_target: Path) -> dict[str, Any]:
     return bound
 
 
-def render_setup(setup_id: str, *, existing_settings: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[Path, bytes]]:
+def render_setup(
+    setup_id: str, *, existing_settings: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], dict[Path, bytes]]:
     validate_setup_id(setup_id)
     setup_root = CATALOG_ROOT / setup_id
     if not setup_root.is_dir() or setup_root.is_symlink():
@@ -353,7 +397,9 @@ def render_setup(setup_id: str, *, existing_settings: dict[str, Any] | None = No
         Path("AGENTS.md"): agents_md,
     }
     desired.update(render_builder_files())
-    desired[Path(STAMP_NAME)] = canonical_json(build_stamp(setup_id, desired, metadata["launch_args"]))
+    desired[Path(STAMP_NAME)] = canonical_json(
+        build_stamp(setup_id, desired, metadata["launch_args"])
+    )
     return metadata, desired
 
 
@@ -364,7 +410,14 @@ def list_setups() -> list[dict[str, Any]]:
             continue
         metadata = load_json_object(path / "setup.json", f"setup {path.name} metadata")
         validate_setup_metadata(metadata, path.name)
-        result.append({"id": metadata["id"], "description": metadata["description"], "builder_default_on": metadata["builder_default_on"], "launch_args": metadata["launch_args"]})
+        result.append(
+            {
+                "id": metadata["id"],
+                "description": metadata["description"],
+                "builder_default_on": metadata["builder_default_on"],
+                "launch_args": metadata["launch_args"],
+            }
+        )
     return result
 
 
@@ -420,7 +473,10 @@ def ensure_target_directory(target: Path) -> Path:
 
 
 def any_managed_path_exists(target: Path) -> bool:
-    return any((target / relative).exists() or (target / relative).is_symlink() for relative in MANAGED_PATHS)
+    return any(
+        (target / relative).exists() or (target / relative).is_symlink()
+        for relative in MANAGED_PATHS
+    )
 
 
 def load_stamp(target: Path) -> dict[str, Any] | None:
@@ -429,7 +485,11 @@ def load_stamp(target: Path) -> dict[str, Any] | None:
         return None
     value = load_json_object(stamp, "setup stamp", owner_only=True)
     require_exact_keys(value, STAMP_KEYS, "setup stamp")
-    if value["schema_version"] != 1 or value["product_name"] != PRODUCT_NAME or value["build_version"] != VERSION:
+    if (
+        value["schema_version"] != 1
+        or value["product_name"] != PRODUCT_NAME
+        or value["build_version"] != VERSION
+    ):
         fail("setup stamp is not compatible with this build")
     if value["canonical_target"] != str(target):
         fail("setup stamp is bound to a different canonical target")
@@ -447,7 +507,9 @@ def validate_managed_files(target: Path, stamp: dict[str, Any]) -> list[str]:
     for relative in ordered:
         if relative.is_absolute() or ".." in relative.parts:
             fail("setup stamp contains an unsafe managed path")
-        content, _ = read_regular_file(target / relative, f"managed file {relative}", owner_only=True)
+        content, _ = read_regular_file(
+            target / relative, f"managed file {relative}", owner_only=True
+        )
         if managed_digest(relative, content) != expected[str(relative)]:
             drift.append(str(relative))
     if drift:
@@ -494,7 +556,11 @@ def current_managed_snapshot(target: Path) -> dict[Path, bytes | None]:
 
 
 def prune_empty_managed_dirs(target: Path) -> None:
-    candidates = sorted({(target / relative).parent for relative in MANAGED_PATHS}, key=lambda item: len(item.parts), reverse=True)
+    candidates = sorted(
+        {(target / relative).parent for relative in MANAGED_PATHS},
+        key=lambda item: len(item.parts),
+        reverse=True,
+    )
     for directory in candidates:
         while directory != target and directory.is_dir():
             try:
@@ -519,7 +585,9 @@ def restore_snapshot(target: Path, snapshot: dict[Path, bytes | None]) -> None:
     prune_empty_managed_dirs(target)
 
 
-def replace_managed_state(target: Path, desired: dict[Path, bytes | None], expected: dict[str, Any]) -> None:
+def replace_managed_state(
+    target: Path, desired: dict[Path, bytes | None], expected: dict[str, Any]
+) -> None:
     del expected
     for relative, content in desired.items():
         path = target / relative
@@ -573,12 +641,23 @@ def create_backup(target: Path, state: dict[str, Any]) -> int:
     managed_files = list(state["managed_files"])
     for raw_relative in [*managed_files, STAMP_NAME]:
         relative = Path(raw_relative)
-        content, _ = read_regular_file(target / relative, f"managed file {relative}", owner_only=True)
+        content, _ = read_regular_file(
+            target / relative, f"managed file {relative}", owner_only=True
+        )
         destination = slot_dir / relative
         destination.parent.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
         destination.write_bytes(content)
         destination.chmod(OWNER_FILE_MODE)
-    envelope = {"schema_version": 1, "product_name": PRODUCT_NAME, "build_version": VERSION, "slot": 0, "canonical_target": str(target), "source_setup_id": state["setup_id"], "managed_files": managed_files, "created_at": int(time.time())}
+    envelope = {
+        "schema_version": 1,
+        "product_name": PRODUCT_NAME,
+        "build_version": VERSION,
+        "slot": 0,
+        "canonical_target": str(target),
+        "source_setup_id": state["setup_id"],
+        "managed_files": managed_files,
+        "created_at": int(time.time()),
+    }
     (slot_dir / BACKUP_NAME).write_bytes(canonical_json(envelope))
     (slot_dir / BACKUP_NAME).chmod(OWNER_FILE_MODE)
     refresh_backup_slot_numbers(pool)
@@ -603,14 +682,20 @@ def load_backup(target: Path, slot: int) -> tuple[dict[str, Any], dict[Path, byt
     require_directory(slot_dir, f"backup slot {slot}")
     envelope = load_json_object(slot_dir / BACKUP_NAME, "backup envelope", owner_only=True)
     require_exact_keys(envelope, BACKUP_KEYS, "backup envelope")
-    if envelope["schema_version"] != 1 or envelope["product_name"] != PRODUCT_NAME or envelope["build_version"] != VERSION:
+    if (
+        envelope["schema_version"] != 1
+        or envelope["product_name"] != PRODUCT_NAME
+        or envelope["build_version"] != VERSION
+    ):
         fail("backup envelope is not compatible with this build")
     if envelope["canonical_target"] != str(target):
         fail("backup belongs to a different canonical target")
     files: dict[Path, bytes] = {}
     for raw_relative in [*envelope["managed_files"], STAMP_NAME]:
         relative = Path(raw_relative)
-        content, _ = read_regular_file(slot_dir / relative, f"backup file {relative}", owner_only=True)
+        content, _ = read_regular_file(
+            slot_dir / relative, f"backup file {relative}", owner_only=True
+        )
         files[relative] = content
     return envelope, files
 
@@ -621,7 +706,9 @@ def mutate_setup(target: Path, setup_id: str, operation: str) -> dict[str, Any]:
         state = inspect_target(canonical_target)
         existing_settings = read_existing_settings_if_managed(canonical_target, state)
         metadata, desired = render_setup(setup_id, existing_settings=existing_settings)
-        stamp = bind_stamp(parse_json_object(desired[Path(STAMP_NAME)], "desired stamp"), canonical_target)
+        stamp = bind_stamp(
+            parse_json_object(desired[Path(STAMP_NAME)], "desired stamp"), canonical_target
+        )
         desired[Path(STAMP_NAME)] = canonical_json(stamp)
         changed = changed_paths(canonical_target, desired)
         backup_slot: int | None = None
@@ -635,7 +722,16 @@ def mutate_setup(target: Path, setup_id: str, operation: str) -> dict[str, Any]:
         except BaseException:
             restore_snapshot(canonical_target, snapshot)
             raise
-    return {"ok": True, "operation": operation, "setup_id": setup_id, "description": metadata["description"], "target": str(canonical_target), "changed": changed, "backup_slot": backup_slot, "state": post["state"]}
+    return {
+        "ok": True,
+        "operation": operation,
+        "setup_id": setup_id,
+        "description": metadata["description"],
+        "target": str(canonical_target),
+        "changed": changed,
+        "backup_slot": backup_slot,
+        "state": post["state"],
+    }
 
 
 def plan_setup(target: Path, setup_id: str) -> dict[str, Any]:
@@ -644,7 +740,9 @@ def plan_setup(target: Path, setup_id: str) -> dict[str, Any]:
     existing_settings = read_existing_settings_if_managed(canonical_target, state)
     _metadata, desired = render_setup(setup_id, existing_settings=existing_settings)
     if state["state"] == "managed":
-        stamp = bind_stamp(parse_json_object(desired[Path(STAMP_NAME)], "desired stamp"), canonical_target)
+        stamp = bind_stamp(
+            parse_json_object(desired[Path(STAMP_NAME)], "desired stamp"), canonical_target
+        )
         desired[Path(STAMP_NAME)] = canonical_json(stamp)
         changed = changed_paths(canonical_target, desired)
         operation = "switch" if state.get("setup_id") != setup_id else "install"
@@ -653,7 +751,16 @@ def plan_setup(target: Path, setup_id: str) -> dict[str, Any]:
         changed = sorted(str(path) for path in desired)
         operation = "install"
         backup_required = False
-    return {"ok": True, "operation": operation, "setup_id": setup_id, "target": str(canonical_target), "state": state["state"], "mutates": False, "backup_required": backup_required, "changed": changed}
+    return {
+        "ok": True,
+        "operation": operation,
+        "setup_id": setup_id,
+        "target": str(canonical_target),
+        "state": state["state"],
+        "mutates": False,
+        "backup_required": backup_required,
+        "changed": changed,
+    }
 
 
 def remove_setup(target: Path) -> dict[str, Any]:
@@ -670,7 +777,13 @@ def remove_setup(target: Path) -> dict[str, Any]:
         except BaseException:
             restore_snapshot(canonical_target, snapshot)
             raise
-    return {"ok": True, "operation": "remove", "target": str(canonical_target), "removed_setup_id": state["setup_id"], "backup_slot": backup_slot}
+    return {
+        "ok": True,
+        "operation": "remove",
+        "target": str(canonical_target),
+        "removed_setup_id": state["setup_id"],
+        "backup_slot": backup_slot,
+    }
 
 
 def restore_backup(target: Path, slot: int) -> dict[str, Any]:
@@ -687,7 +800,14 @@ def restore_backup(target: Path, slot: int) -> dict[str, Any]:
         except BaseException:
             restore_snapshot(canonical_target, snapshot)
             raise
-    return {"ok": True, "operation": "restore", "target": str(canonical_target), "setup_id": post["setup_id"], "restored_from_slot": slot, "restored_source_setup_id": envelope["source_setup_id"]}
+    return {
+        "ok": True,
+        "operation": "restore",
+        "target": str(canonical_target),
+        "setup_id": post["setup_id"],
+        "restored_from_slot": slot,
+        "restored_source_setup_id": envelope["source_setup_id"],
+    }
 
 
 def load_baseline() -> dict[str, Any]:
@@ -731,16 +851,41 @@ def qoder_executable(target: Path) -> Path:
 
 def software_status(target: Path) -> dict[str, Any]:
     if not target.exists():
-        return {"ok": True, "installed": False, "current": False, "target": str(target), "version": None, "executable": None}
+        return {
+            "ok": True,
+            "installed": False,
+            "current": False,
+            "target": str(target),
+            "version": None,
+            "executable": None,
+        }
     canonical_target = require_explicit_absolute_target(str(target))
     executable = qoder_executable(canonical_target)
     manifest = software_manifest_path(canonical_target)
     if not executable.exists() or not manifest.exists():
-        return {"ok": True, "installed": False, "current": False, "target": str(canonical_target), "version": None, "executable": str(executable)}
+        return {
+            "ok": True,
+            "installed": False,
+            "current": False,
+            "target": str(canonical_target),
+            "version": None,
+            "executable": str(executable),
+        }
     require_regular_file(executable, "Qoder CLI executable")
     info = load_json_object(manifest, "software manifest", owner_only=True)
-    current = info.get("schema_version") == 1 and info.get("version") == TESTED_VERSION and info.get("executable") == f"bin/{COMMAND_NAME}"
-    return {"ok": True, "installed": True, "current": current, "target": str(canonical_target), "version": info.get("version"), "executable": str(executable)}
+    current = (
+        info.get("schema_version") == 1
+        and info.get("version") == TESTED_VERSION
+        and info.get("executable") == f"bin/{COMMAND_NAME}"
+    )
+    return {
+        "ok": True,
+        "installed": True,
+        "current": current,
+        "target": str(canonical_target),
+        "version": info.get("version"),
+        "executable": str(executable),
+    }
 
 
 def download_bytes(url: str) -> bytes:
@@ -782,7 +927,9 @@ def install_or_update_cli(target: Path, *, operation: str) -> dict[str, Any]:
         actual_sha = sha256_bytes(archive_bytes)
         if actual_sha != expected_sha:
             fail(f"downloaded Qoder CLI digest mismatch for {asset_key}")
-        staging = canonical_target.parent / f".{canonical_target.name}.nddev-qoder-cli-software-stage"
+        staging = (
+            canonical_target.parent / f".{canonical_target.name}.nddev-qoder-cli-software-stage"
+        )
         if staging.exists():
             shutil.rmtree(staging)
         staging.mkdir(mode=OWNER_DIRECTORY_MODE)
@@ -814,13 +961,29 @@ def install_or_update_cli(target: Path, *, operation: str) -> dict[str, Any]:
             shutil.copy2(binary_source, temporary)
             temporary.chmod(0o700)
             os.replace(temporary, executable)
-            manifest = {"schema_version": 1, "version": TESTED_VERSION, "executable": f"bin/{COMMAND_NAME}", "asset": asset_key, "sha256": expected_sha, "source": url}
-            software_manifest_path(canonical_target).parent.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
+            manifest = {
+                "schema_version": 1,
+                "version": TESTED_VERSION,
+                "executable": f"bin/{COMMAND_NAME}",
+                "asset": asset_key,
+                "sha256": expected_sha,
+                "source": url,
+            }
+            software_manifest_path(canonical_target).parent.mkdir(
+                mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True
+            )
             software_manifest_path(canonical_target).write_bytes(canonical_json(manifest))
             software_manifest_path(canonical_target).chmod(OWNER_FILE_MODE)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-    return {"ok": True, "operation": operation, "target": str(canonical_target), "version": TESTED_VERSION, "asset": asset_key, "executable": str(qoder_executable(canonical_target))}
+    return {
+        "ok": True,
+        "operation": operation,
+        "target": str(canonical_target),
+        "version": TESTED_VERSION,
+        "asset": asset_key,
+        "executable": str(qoder_executable(canonical_target)),
+    }
 
 
 def isolated_child_environment(target: Path) -> dict[str, str]:
@@ -835,7 +998,19 @@ def isolated_child_environment(target: Path) -> dict[str, str]:
         if name in TOKEN_ENV_NAMES:
             continue
         env[name] = value
-    env.update({"HOME": str(home), "USERPROFILE": str(home), "QODER_HOME": str(target), "QODER_AUTO_UPDATE": "false", "TMPDIR": str(tmp), "XDG_CONFIG_HOME": str(runtime / "xdg-config"), "XDG_CACHE_HOME": str(runtime / "xdg-cache"), "XDG_STATE_HOME": str(runtime / "xdg-state"), "PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "QODER_HOME": str(target),
+            "QODER_AUTO_UPDATE": "false",
+            "TMPDIR": str(tmp),
+            "XDG_CONFIG_HOME": str(runtime / "xdg-config"),
+            "XDG_CACHE_HOME": str(runtime / "xdg-cache"),
+            "XDG_STATE_HOME": str(runtime / "xdg-state"),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        }
+    )
     return env
 
 
@@ -847,8 +1022,16 @@ def launch_qoder(target: Path, args: list[str]) -> int:
     status = software_status(canonical_target)
     if not status["installed"] or not status["current"]:
         fail("Qoder CLI is not installed at the tested version in this target")
-    child_args = list(state["launch_args"]) + ["--settings", str(canonical_target / "settings.json")] + args
-    completed = subprocess.run([str(qoder_executable(canonical_target)), *child_args], cwd=os.getcwd(), env=isolated_child_environment(canonical_target), check=False, timeout=None)
+    child_args = (
+        list(state["launch_args"]) + ["--settings", str(canonical_target / "settings.json")] + args
+    )
+    completed = subprocess.run(
+        [str(qoder_executable(canonical_target)), *child_args],
+        cwd=os.getcwd(),
+        env=isolated_child_environment(canonical_target),
+        check=False,
+        timeout=None,
+    )
     return int(completed.returncode)
 
 
