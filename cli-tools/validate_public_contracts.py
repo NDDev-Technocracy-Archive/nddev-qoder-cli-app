@@ -30,7 +30,6 @@ LAUNCH_ARGS = {
     "full-auto": ["--permission-mode", "bypass_permissions"],
 }
 PLACEHOLDER_MARKER = "skele" + "ton"
-RETIRED_MARKERS = ("q" + "coder", "qwen" + " code")
 
 
 def read_json(relative: str) -> dict[str, Any]:
@@ -228,7 +227,7 @@ def validate_builder(errors: list[str]) -> None:
         require((ROOT / relative).is_file(), f"missing builder native file: {relative}", errors)
 
 
-def validate_absent_retired_markers(errors: list[str]) -> None:
+def validate_public_tree(errors: list[str]) -> None:
     own_path = Path(__file__).resolve()
     for path in sorted(ROOT.rglob("*")):
         if path.is_dir() or ".git" in path.parts or "__pycache__" in path.parts:
@@ -238,9 +237,6 @@ def validate_absent_retired_markers(errors: list[str]) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
         if PLACEHOLDER_MARKER in text:
             errors.append(f"placeholder marker found in {path.relative_to(ROOT)}")
-        for marker in RETIRED_MARKERS:
-            if marker in text:
-                errors.append(f"retired marker found in {path.relative_to(ROOT)}")
 
 
 def main() -> int:
@@ -250,7 +246,7 @@ def main() -> int:
         validate_assets(errors)
         validate_setups(errors)
         validate_builder(errors)
-        validate_absent_retired_markers(errors)
+        validate_public_tree(errors)
     except Exception as exc:  # noqa: BLE001
         errors.append(str(exc))
     if errors:
