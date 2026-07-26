@@ -1,0 +1,29 @@
+{
+  "general": {
+    "defaultPermissionMode": "bypass_permissions",
+    "enableAutoUpdate": false
+  },
+  "permissions": {
+    "allow": ["*"],
+    "ask": [],
+    "deny": []
+  },
+  "autoMode": {
+    "enabled": true
+  },
+  "sandbox": {
+    "gitAuth": false,
+    "ghAuth": false,
+    "network": "enabled"
+  },
+  "enabledPlugins": {
+    "nddev-builder@local": true
+  },
+  "extraKnownMarketplaces": {},
+  "hooks": {
+    "enabled": true
+  },
+  "tools": {
+    "mcp": {}
+  }
+}

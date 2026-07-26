@@ -1,0 +1,27 @@
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "30 7 * * 1"
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  codeql:
+    name: CodeQL
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: NDDev-it-com/ci-workflows/.github/workflows/public-codeql.yml@2ccb80e96f5771b6a6b4eae63a4f47e232906dc7 # 0.12.0
+    with:
+      languages: '["python", "actions"]'
+      queries: security-and-quality

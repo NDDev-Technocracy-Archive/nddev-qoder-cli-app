@@ -1,0 +1,22 @@
+name: scorecard
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "50 7 * * 1"
+
+permissions: {}
+
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scorecard:
+    name: OpenSSF Scorecard
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: NDDev-it-com/ci-workflows/.github/workflows/public-scorecard-json.yml@2ccb80e96f5771b6a6b4eae63a4f47e232906dc7 # 0.12.0

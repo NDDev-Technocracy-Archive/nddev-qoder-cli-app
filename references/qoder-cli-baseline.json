@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "source": "official-qoder-cli-manifest",
+  "install_script": {
+    "url": "https://qoder.com/install",
+    "base_url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli",
+    "binary": "qodercli"
+  },
+  "manifest": {
+    "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
+    "latest": "1.1.5",
+    "published_at": "2026-07-24T11:00:12.692Z",
+    "files": {
+      "darwin-arm64": {
+        "os": "darwin",
+        "arch": "arm64",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-darwin-arm64.tar.gz",
+        "sha256": "48b220d90ba69462b24fb214a5cf1ecc9e3d4785e7d8e32e63ceb9ca739b9d8a"
+      },
+      "darwin-amd64": {
+        "os": "darwin",
+        "arch": "amd64",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-darwin-x64.tar.gz",
+        "sha256": "9c72803f4c883af971b43c968023b925f8c085e79672ac2c66d8a65e80a571d4"
+      },
+      "linux-arm64": {
+        "os": "linux",
+        "arch": "arm64",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-linux-arm64.tar.gz",
+        "sha256": "ad5ed775e8719781df40add6b815f7c823bbe1640dcba45d846145b8c8d8b88d"
+      },
+      "linux-arm64-musl": {
+        "os": "linux",
+        "arch": "arm64-musl",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-linux-arm64-musl.tar.gz",
+        "sha256": "2ea1b1edc121bc747e88f9bdf6740622db18035768b7033f5ed6b5d659e9d6fb"
+      },
+      "linux-amd64": {
+        "os": "linux",
+        "arch": "amd64",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-linux-x64.tar.gz",
+        "sha256": "72f4b210bf6a9f854e7dc85dba1bddc935eae4f1efff41da1ced0bf330ae2dee"
+      },
+      "linux-amd64-baseline": {
+        "os": "linux",
+        "arch": "amd64-baseline",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-linux-x64-baseline.tar.gz",
+        "sha256": "2ee5797c634dc2277a16b64cc5f1faf855c3d2ee497bb86c18e449803a4d3328"
+      },
+      "linux-amd64-musl": {
+        "os": "linux",
+        "arch": "amd64-musl",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-linux-x64-musl.tar.gz",
+        "sha256": "90ff9351c24a45787450551bdbb6352e4d9ad16299be84021729f9e2d0e6945f"
+      },
+      "windows-amd64": {
+        "os": "windows",
+        "arch": "amd64",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-windows-x64.zip",
+        "sha256": "f0970f29e525b18e3be67ea4692ec2dde073f65a95eec9ad0b81e07b32d1b62c",
+        "runtime": "bun",
+        "variant": "standard",
+        "min_windows_build": 17763
+      },
+      "windows-amd64-legacy": {
+        "os": "windows",
+        "arch": "amd64",
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/qodercli-windows-x64-legacy.zip",
+        "sha256": "ed160f0075a8ac048ea34a6e92ed047739957c4bca8020821cb2bfe3c521fc9e",
+        "runtime": "node-sea",
+        "variant": "legacy"
+      }
+    }
+  },
+  "npm": {
+    "package": "@qoder-ai/qodercli",
+    "version": "1.1.5",
+    "binary": "qodercli"
+  },
+  "configuration": {
+    "home_environment_variable": "QODER_HOME",
+    "global_settings": "settings.json",
+    "global_instructions": "AGENTS.md",
+    "skills_root": "skills",
+    "agents_root": "agents",
+    "hooks_root": "hooks",
+    "plugins_root": "plugins",
+    "plugin_manifest": ".qoder-plugin/plugin.json"
+  },
+  "native_builder_projection": {
+    "plugin": "plugins/nddev-builder/.qoder-plugin/plugin.json",
+    "skills": "plugins/nddev-builder/skills",
+    "agents": "plugins/nddev-builder/agents",
+    "hooks": "plugins/nddev-builder/hooks/hooks.json",
+    "user_skill": "skills/nddev-builder/SKILL.md",
+    "user_agent": "agents/nddev-builder.md",
+    "user_hook": "hooks/nddev-builder.json",
+    "marketplace": null
+  }
+}

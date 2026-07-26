@@ -1,0 +1,111 @@
+{
+  "schema_version": 2,
+  "name": "nddev-qoder-cli-app",
+  "build_version": "0.1.0",
+  "entrypoint": "python3 cli-tools/nddev_qoder_cli.py",
+  "source_root": "setups",
+  "setup_ids": ["safe", "balanced", "full-auto"],
+  "managed_files": [
+    "settings.json",
+    "AGENTS.md",
+    "plugins/nddev-builder/.qoder-plugin/plugin.json",
+    "plugins/nddev-builder/skills/nddev-builder/SKILL.md",
+    "plugins/nddev-builder/agents/nddev-builder.md",
+    "plugins/nddev-builder/hooks/hooks.json",
+    "skills/nddev-builder/SKILL.md",
+    "agents/nddev-builder.md",
+    "hooks/nddev-builder.json",
+    "NDDEV-QODER-CLI-SETUP.json"
+  ],
+  "permission_policy": {
+    "configuration_surface": "defaultPermissionMode plus qodercli launch permission flags",
+    "setups": {
+      "safe": {
+        "defaultPermissionMode": "default",
+        "launch_args": ["--permission-mode", "default"]
+      },
+      "balanced": {
+        "defaultPermissionMode": "accept_edits",
+        "launch_args": [
+          "--permission-mode",
+          "accept_edits",
+          "--allowed-tools",
+          "Read,Grep,Glob,Edit,Write,Bash(git status),Bash(git diff:*),Bash(git log:*)",
+          "--disallowed-tools",
+          "Bash(rm -rf:*),Bash(sudo:*),Bash(git push:*)"
+        ]
+      },
+      "full-auto": {
+        "defaultPermissionMode": "bypass_permissions",
+        "launch_args": ["--permission-mode", "bypass_permissions"]
+      }
+    },
+    "source": "setups/<id>/settings.json and setups/<id>/setup.json"
+  },
+  "builder_capability": {
+    "projection": "qoder-native-plugin-user-files",
+    "source_root": "plugins/nddev-builder",
+    "manifest": "plugins/nddev-builder/.qoder-plugin/plugin.json",
+    "native_paths": [".qoder-plugin/plugin.json", "skills", "agents", "hooks"],
+    "user_projection_paths": ["skills/nddev-builder", "agents/nddev-builder.md", "hooks/nddev-builder.json"],
+    "default_on": true,
+    "marketplace": null
+  },
+  "runtime_compatibility": {
+    "baseline_ref": "references/qoder-cli-baseline.json",
+    "version_ref": "build/version.json",
+    "tested_version": "1.1.5",
+    "npm_package": "@qoder-ai/qodercli",
+    "manifest_url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
+    "documentation": [
+      "https://docs.qoder.com/",
+      "https://qoder.com/install",
+      "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json"
+    ]
+  },
+  "runtime_launch": {
+    "command": "<absolute-target>/bin/qodercli",
+    "direct_command": "QODER_HOME=<absolute-target> <absolute-target>/bin/qodercli [setup launch args] --settings <absolute-target>/settings.json [args...]",
+    "home_environment_variable": "QODER_HOME",
+    "executable_source": "validated-target-owned-qoder-release-asset",
+    "forwards_arguments": true,
+    "forwards_child_exit_code": true,
+    "json_manager_errors_supported": true,
+    "manager_command": "python3 cli-tools/nddev_qoder_cli.py launch --target <absolute-target> -- [args...]",
+    "requires_clean_managed_target": true,
+    "streams_child_stdio": true,
+    "successful_child_output_wrapped": false,
+    "environment_scope": "child-process-only",
+    "token_environment_inheritance": "stripped"
+  },
+  "command_policy": {
+    "json_supported": ["list", "status", "plan", "install", "switch", "restore", "remove", "software-status", "install-cli", "update-cli"],
+    "target_required": ["status", "plan", "install", "switch", "restore", "remove", "software-status", "install-cli", "update-cli", "launch"],
+    "plan_mutates": false,
+    "restore_backup_option": "--backup <0..9>"
+  },
+  "transaction_policy": {
+    "managed_file_mode": "0600",
+    "new_target_mode": "0700",
+    "lock": "exclusive sibling directory",
+    "preserve_unmanaged_files": true,
+    "reject_symlink_managed_files": true,
+    "reject_hardlink_managed_files": true,
+    "rollback_on_failure": true,
+    "backup_slots": 10
+  },
+  "software_install": {
+    "tested_version": "1.1.5",
+    "supported_platforms": ["macos", "linux", "windows"],
+    "source": "official Qoder CLI manifest and release assets",
+    "layout": {
+      "visible_command": "bin/qodercli",
+      "software_manifest": "software/qoder-cli.json"
+    },
+    "commands": {
+      "status": "python3 cli-tools/nddev_qoder_cli.py software-status --target <absolute-target> [--json]",
+      "install": "python3 cli-tools/nddev_qoder_cli.py install-cli --target <absolute-target> [--json]",
+      "update": "python3 cli-tools/nddev_qoder_cli.py update-cli --target <absolute-target> [--json]"
+    }
+  }
+}

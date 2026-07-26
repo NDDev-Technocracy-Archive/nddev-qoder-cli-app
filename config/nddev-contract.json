@@ -1,10 +1,95 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "product_name": "nddev-qoder-cli-app",
   "github_repository": "NDDev-it-com/nddev-qoder-cli-app",
   "license": "AGPL-3.0-or-later",
-  "skeleton": {
-    "status": "skeleton",
-    "harness_id": "qoder-cli"
+  "manifest_ref": "build/manifest.json",
+  "version_ref": "build/version.json",
+  "managed_state": {
+    "stamp_file": "NDDEV-QODER-CLI-SETUP.json",
+    "stamp_schema": 1,
+    "managed_file_mode": "0600",
+    "managed_files": ["settings.json", "AGENTS.md"],
+    "managed_tree_roots": ["plugins/nddev-builder", "skills/nddev-builder", "agents", "hooks"],
+    "preserve_other_state": true
+  },
+  "setup_system": {
+    "catalog_root": "setups",
+    "identity_source": "setups/<setup-id>/setup.json",
+    "setup_ids": ["safe", "balanced", "full-auto"],
+    "selection_option": "--setup <safe|balanced|full-auto>",
+    "list_command": "python3 cli-tools/nddev_qoder_cli.py list [--json]",
+    "status_command": "python3 cli-tools/nddev_qoder_cli.py status --target <absolute-target> [--json]",
+    "launch_command": "python3 cli-tools/nddev_qoder_cli.py launch --target <absolute-target> -- [args...]",
+    "builder_default_on": true
+  },
+  "safety": {
+    "explicit_target_required": true,
+    "absolute_target_required": true,
+    "relative_target_rejected": true,
+    "missing_target_argument_rejected": true,
+    "target_symlinks_rejected": true,
+    "canonical_target_binding": true,
+    "default_target": null,
+    "max_backups": 10,
+    "new_target_mode": "0700",
+    "preserve_existing_target_mode": true,
+    "rollback_on_failure": true
+  },
+  "runtime_compatibility": {
+    "baseline_ref": "references/qoder-cli-baseline.json",
+    "version_ref": "build/version.json",
+    "tested_version": "1.1.5",
+    "npm_package": "@qoder-ai/qodercli",
+    "manifest_url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
+    "documentation": [
+      "https://docs.qoder.com/",
+      "https://qoder.com/install",
+      "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json"
+    ]
+  },
+  "runtime_launch": {
+    "command": "<absolute-target>/bin/qodercli",
+    "direct_command": "QODER_HOME=<absolute-target> <absolute-target>/bin/qodercli [setup launch args] --settings <absolute-target>/settings.json [args...]",
+    "home_environment_variable": "QODER_HOME",
+    "executable_source": "validated-target-owned-qoder-release-asset",
+    "forwards_arguments": true,
+    "forwards_child_exit_code": true,
+    "json_manager_errors_supported": true,
+    "manager_command": "python3 cli-tools/nddev_qoder_cli.py launch --target <absolute-target> -- [args...]",
+    "requires_clean_managed_target": true,
+    "streams_child_stdio": true,
+    "successful_child_output_wrapped": false,
+    "environment_scope": "child-process-only",
+    "token_environment_inheritance": "stripped"
+  },
+  "software_install": {
+    "tested_version": "1.1.5",
+    "supported_platforms": ["macos", "linux", "windows"],
+    "source": "official Qoder CLI manifest and release assets",
+    "layout": {
+      "visible_command": "bin/qodercli",
+      "software_manifest": "software/qoder-cli.json"
+    },
+    "commands": {
+      "status": "python3 cli-tools/nddev_qoder_cli.py software-status --target <absolute-target> [--json]",
+      "install": "python3 cli-tools/nddev_qoder_cli.py install-cli --target <absolute-target> [--json]",
+      "update": "python3 cli-tools/nddev_qoder_cli.py update-cli --target <absolute-target> [--json]"
+    }
+  },
+  "builder_capability": {
+    "projection": "qoder-native-plugin-user-files",
+    "source_root": "plugins/nddev-builder",
+    "manifest": "plugins/nddev-builder/.qoder-plugin/plugin.json",
+    "version_ref": "build/version.json:nddev_builder_plugin_version",
+    "native_paths": [".qoder-plugin/plugin.json", "skills", "agents", "hooks"],
+    "user_projection_paths": ["skills/nddev-builder", "agents/nddev-builder.md", "hooks/nddev-builder.json"],
+    "skills": ["nddev-builder"],
+    "agents": ["nddev-builder"],
+    "hooks": ["nddev-builder"],
+    "mcp": [],
+    "extensions": [],
+    "default_on": true,
+    "marketplace": null
   }
 }

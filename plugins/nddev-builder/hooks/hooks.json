@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "hooks": [
+    {
+      "name": "nddev-builder-readiness",
+      "event": "agentStop",
+      "description": "Verify public contract, native builder projection, target isolation, and test evidence before final handoff.",
+      "command": "python3 cli-tools/validate_public_contracts.py"
+    }
+  ]
+}

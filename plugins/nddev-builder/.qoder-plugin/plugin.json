@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "nddev-builder",
+  "displayName": "NDDev Builder",
+  "description": "NDDev authoring guidance for Qoder CLI plugins, skills, agents, hooks, MCP, and settings.",
+  "version": "0.1.0",
+  "skills": "skills",
+  "agents": "agents",
+  "hooks": "hooks/hooks.json",
+  "mcp": {}
+}
