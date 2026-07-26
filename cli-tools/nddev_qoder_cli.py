@@ -20,7 +20,7 @@ import time
 import urllib.request
 import zipfile
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1001,10 +1001,14 @@ def qoder_executable(target: Path) -> Path:
 
 def software_presence(target: Path) -> dict[str, Any]:
     replace_paths_present = [
-        str(relative) for relative in SOFTWARE_REPLACE_PATHS if path_exists_no_follow(target / relative)
+        str(relative)
+        for relative in SOFTWARE_REPLACE_PATHS
+        if path_exists_no_follow(target / relative)
     ]
     owned_parent_paths_present = [
-        str(relative) for relative in SOFTWARE_PARENT_PATHS if path_exists_no_follow(target / relative)
+        str(relative)
+        for relative in SOFTWARE_PARENT_PATHS
+        if path_exists_no_follow(target / relative)
     ]
     if not replace_paths_present and not owned_parent_paths_present:
         state = "absent"
@@ -1020,7 +1024,9 @@ def software_presence(target: Path) -> dict[str, Any]:
     }
 
 
-def file_sha256(path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BYTES) -> tuple[str, int]:
+def file_sha256(
+    path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BYTES
+) -> tuple[str, int]:
     info = require_regular_file(path, label)
     if info.st_size > max_bytes:
         fail(f"{label} exceeds the {max_bytes}-byte size limit")
@@ -1049,7 +1055,11 @@ def file_sha256(path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BY
         os.close(descriptor)
     final = require_regular_file(path, label)
     expected = identity_of(info)
-    if identity_of(opened) != expected or identity_of(after) != expected or identity_of(final) != expected:
+    if (
+        identity_of(opened) != expected
+        or identity_of(after) != expected
+        or identity_of(final) != expected
+    ):
         fail_concurrent(f"{label} changed while it was read")
     return digest.hexdigest(), total
 
@@ -1190,31 +1200,64 @@ def download_asset_bytes(url: str, *, expected_size: int) -> bytes:
     return b"".join(chunks)
 
 
+def validate_archive_member_path(name: str) -> PurePosixPath:
+    normalized = name.replace("\\", "/")
+    if "\x00" in normalized:
+        fail(f"unsafe archive member path: {name}")
+    if normalized.startswith("//"):
+        fail(f"unsafe archive member path: {name}")
+    if re.fullmatch(r"(?i)[a-z]:.*", normalized):
+        fail(f"unsafe archive member path: {name}")
+    path = PurePosixPath(normalized)
+    if not path.parts or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        fail(f"unsafe archive member path: {name}")
+    return path
+
+
 def safe_tar_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
     members = archive.getmembers()
     if len(members) > SOFTWARE_TREE_MAX_PATHS:
         fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_PATHS}-path limit")
+    seen: set[str] = set()
+    total_size = 0
     for member in members:
-        path = Path(member.name)
-        if path.is_absolute() or ".." in path.parts:
-            fail(f"unsafe archive member path: {member.name}")
+        path = validate_archive_member_path(member.name)
+        path_key = path.as_posix()
+        if path_key in seen:
+            fail(f"duplicate archive member path: {member.name}")
+        seen.add(path_key)
         if member.issym() or member.islnk() or member.isdev():
             fail(f"unsafe archive member type: {member.name}")
+        if member.isfile():
+            total_size += member.size
+            if total_size > SOFTWARE_TREE_MAX_BYTES:
+                fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_BYTES}-byte limit")
     return members
 
 
-def safe_zip_names(archive: zipfile.ZipFile) -> list[str]:
-    names = archive.namelist()
-    if len(names) > SOFTWARE_TREE_MAX_PATHS:
+def safe_zip_infos(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    infos = archive.infolist()
+    if len(infos) > SOFTWARE_TREE_MAX_PATHS:
         fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_PATHS}-path limit")
-    for info in archive.infolist():
-        path = Path(info.filename)
-        if path.is_absolute() or ".." in path.parts:
-            fail(f"unsafe archive member path: {info.filename}")
+    seen: set[str] = set()
+    total_size = 0
+    for info in infos:
+        path = validate_archive_member_path(info.filename)
+        path_key = path.as_posix()
+        if path_key in seen:
+            fail(f"duplicate archive member path: {info.filename}")
+        seen.add(path_key)
         file_type = (info.external_attr >> 16) & 0o170000
-        if stat.S_ISLNK(file_type):
+        if info.is_dir():
+            if file_type and not stat.S_ISDIR(file_type):
+                fail(f"unsafe archive member type: {info.filename}")
+            continue
+        if file_type and not stat.S_ISREG(file_type):
             fail(f"unsafe archive member type: {info.filename}")
-    return names
+        total_size += info.file_size
+        if total_size > SOFTWARE_TREE_MAX_BYTES:
+            fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_BYTES}-byte limit")
+    return infos
 
 
 def chmod_private_tree(root: Path) -> None:
@@ -1227,11 +1270,11 @@ def chmod_private_tree(root: Path) -> None:
         info = path.lstat()
         if stat.S_ISLNK(info.st_mode):
             fail(f"Qoder CLI archive contains symlink: {path.relative_to(root)}")
-        if info.st_nlink != 1:
-            fail(f"Qoder CLI archive contains hard-link alias: {path.relative_to(root)}")
         if stat.S_ISDIR(info.st_mode):
             path.chmod(OWNER_DIRECTORY_MODE)
             continue
+        if info.st_nlink != 1:
+            fail(f"Qoder CLI archive contains hard-link alias: {path.relative_to(root)}")
         if not stat.S_ISREG(info.st_mode):
             fail(f"Qoder CLI archive contains unsupported file type: {path.relative_to(root)}")
         total_bytes += info.st_size
@@ -1259,7 +1302,10 @@ def bounded_process(
         fail(f"process executable not found: {command[0]}")
     except subprocess.TimeoutExpired:
         fail(f"process timed out after {timeout} seconds: {command[0]}")
-    if len(completed.stdout) > PROCESS_OUTPUT_MAX_BYTES or len(completed.stderr) > PROCESS_OUTPUT_MAX_BYTES:
+    if (
+        len(completed.stdout) > PROCESS_OUTPUT_MAX_BYTES
+        or len(completed.stderr) > PROCESS_OUTPUT_MAX_BYTES
+    ):
         fail(f"process output exceeded the {PROCESS_OUTPUT_MAX_BYTES}-byte limit: {command[0]}")
     return completed
 
@@ -1298,11 +1344,22 @@ def extract_archive(archive_path: Path, unpacked: Path) -> None:
     unpacked.mkdir(mode=OWNER_DIRECTORY_MODE)
     if archive_path.name.endswith(".zip"):
         with zipfile.ZipFile(archive_path) as archive:
-            archive.extractall(unpacked, members=safe_zip_names(archive))
+            for info in safe_zip_infos(archive):
+                member_path = validate_archive_member_path(info.filename)
+                destination = unpacked / Path(member_path.as_posix())
+                if info.is_dir():
+                    destination.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
+                    continue
+                ensure_private_parent(destination, f"archive member {info.filename}")
+                with archive.open(info) as source, destination.open("wb") as handle:
+                    shutil.copyfileobj(source, handle)
+                member_mode = (info.external_attr >> 16) & 0o777
+                destination.chmod(0o700 if member_mode & stat.S_IXUSR else OWNER_FILE_MODE)
     else:
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in safe_tar_members(archive):
-                destination = unpacked / member.name
+                member_path = validate_archive_member_path(member.name)
+                destination = unpacked / Path(member_path.as_posix())
                 if member.isdir():
                     destination.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
                     continue
@@ -1319,10 +1376,15 @@ def extract_archive(archive_path: Path, unpacked: Path) -> None:
 
 
 def find_extracted_binary(unpacked: Path) -> Path:
+    candidates: list[Path] = []
     for candidate in sorted(unpacked.rglob("*")):
         if candidate.name in {COMMAND_NAME, f"{COMMAND_NAME}.exe"} and candidate.is_file():
             require_safe_executable(candidate, "extracted Qoder CLI executable")
-            return candidate
+            candidates.append(candidate)
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        fail("Qoder CLI archive contained multiple qodercli executables")
     fail("Qoder CLI archive did not contain a qodercli executable")
 
 
@@ -1330,7 +1392,11 @@ def build_live_stage(staging: Path, asset_key: str, asset: dict[str, Any]) -> Pa
     url = asset.get("url")
     expected_sha = asset.get("sha256")
     expected_size = asset.get("size")
-    if not isinstance(url, str) or not isinstance(expected_sha, str) or not isinstance(expected_size, int):
+    if (
+        not isinstance(url, str)
+        or not isinstance(expected_sha, str)
+        or not isinstance(expected_size, int)
+    ):
         fail(f"baseline asset {asset_key} is incomplete")
     archive_bytes = download_asset_bytes(url, expected_size=expected_size)
     actual_sha = sha256_bytes(archive_bytes)
