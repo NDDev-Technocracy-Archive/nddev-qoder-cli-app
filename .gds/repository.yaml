@@ -1,0 +1,45 @@
+schema_version: 1
+repository:
+  id: "repo_01KYFD7H750WXQ7NW4YGZDXH7N"
+  display_name: "nddev-qoder-cli-app"
+  roles: ["module"]
+  lifecycle: "active"
+provider:
+  type: "github"
+  installation: "installation:github-organization"
+  repository_id: 1312869128
+  owner: "NDDev-it-com"
+  name: "nddev-qoder-cli-app"
+classification:
+  portfolios: ["portfolio:organization-projects", "portfolio:public-modules"]
+  visibility_contract: "public"
+  data_classification: "public"
+policy:
+  profiles: ["repository-default", "organization-default", "public-module"]
+  rollout_ring: "canary-modules"
+git:
+  default_branch: "main"
+  integration: "pull-request"
+  branch_model: "task-branches"
+  handoff_pr: "preferred"
+  cleanup: "merged-only"
+verification:
+  commands:
+    test: ["python3 -m json.tool config/nddev-contract.json"]
+  required: ["test"]
+agent:
+  context_profile: "public-module"
+  generated_agents: true
+  serena:
+    enabled: false
+    provenance_required: false
+module:
+  contract: "public"
+  consumption: ["git-submodule"]
+  compatibility: "semver"
+  pin_policy: "default-branch-commit"
+  publication:
+    registry: "none"
+    github_release: "required"
+release:
+  mode: "github-release"

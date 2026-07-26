@@ -1,0 +1,10 @@
+{
+  "contract_version": 1,
+  "product_name": "nddev-qoder-cli-app",
+  "github_repository": "NDDev-it-com/nddev-qoder-cli-app",
+  "license": "AGPL-3.0-or-later",
+  "skeleton": {
+    "status": "skeleton",
+    "harness_id": "qoder-cli"
+  }
+}
