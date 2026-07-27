@@ -219,7 +219,13 @@ def require_directory(path: Path, label: str) -> os.stat_result:
     return info
 
 
-def require_regular_file(path: Path, label: str, *, owner_only: bool = False) -> os.stat_result:
+def require_regular_file(
+    path: Path,
+    label: str,
+    *,
+    owner_only: bool = False,
+    max_bytes: int = MANAGED_PAYLOAD_MAX_BYTES,
+) -> os.stat_result:
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -230,13 +236,15 @@ def require_regular_file(path: Path, label: str, *, owner_only: bool = False) ->
         fail(f"{label} must not have hard-link aliases")
     if owner_only and not is_owner_only_file(info):
         fail(f"{label} must be owned by the current user with mode 0600")
-    if info.st_size > MANAGED_PAYLOAD_MAX_BYTES:
-        fail(f"{label} exceeds the {MANAGED_PAYLOAD_MAX_BYTES}-byte size limit")
+    if info.st_size > max_bytes:
+        fail(f"{label} exceeds the {max_bytes}-byte size limit")
     return info
 
 
-def require_safe_executable(path: Path, label: str) -> os.stat_result:
-    info = require_regular_file(path, label)
+def require_safe_executable(
+    path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BYTES
+) -> os.stat_result:
+    info = require_regular_file(path, label, max_bytes=max_bytes)
     if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
         fail(f"{label} must be owned by the current user")
     if stat.S_IMODE(info.st_mode) != 0o700:
@@ -337,9 +345,7 @@ def read_regular_file(
     owner_only: bool = False,
     max_bytes: int = MANAGED_PAYLOAD_MAX_BYTES,
 ) -> tuple[bytes, os.stat_result]:
-    before = require_regular_file(path, label, owner_only=owner_only)
-    if before.st_size > max_bytes:
-        fail(f"{label} exceeds the {max_bytes}-byte size limit")
+    before = require_regular_file(path, label, owner_only=owner_only, max_bytes=max_bytes)
     flags = os.O_RDONLY
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
@@ -367,7 +373,7 @@ def read_regular_file(
         after = os.fstat(descriptor)
     finally:
         os.close(descriptor)
-    final = require_regular_file(path, label, owner_only=owner_only)
+    final = require_regular_file(path, label, owner_only=owner_only, max_bytes=max_bytes)
     expected = identity_of(before)
     if identity_of(after) != expected or identity_of(final) != expected:
         fail_concurrent(f"{label} changed while it was being read")
@@ -1028,9 +1034,7 @@ def software_presence(target: Path) -> dict[str, Any]:
 def file_sha256(
     path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BYTES
 ) -> tuple[str, int]:
-    info = require_regular_file(path, label)
-    if info.st_size > max_bytes:
-        fail(f"{label} exceeds the {max_bytes}-byte size limit")
+    info = require_regular_file(path, label, max_bytes=max_bytes)
     flags = os.O_RDONLY
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
@@ -1054,7 +1058,7 @@ def file_sha256(
         after = os.fstat(descriptor)
     finally:
         os.close(descriptor)
-    final = require_regular_file(path, label)
+    final = require_regular_file(path, label, max_bytes=max_bytes)
     expected = identity_of(info)
     if (
         identity_of(opened) != expected
