@@ -46,6 +46,7 @@ PROCESS_OUTPUT_MAX_BYTES = 256 * 1024
 SOFTWARE_DOWNLOAD_MAX_BYTES = 256 * 1024 * 1024
 SOFTWARE_TREE_MAX_BYTES = 512 * 1024 * 1024
 SOFTWARE_TREE_MAX_PATHS = 5000
+APPLEDOUBLE_METADATA_MAX_BYTES = 16 * 1024
 SOFTWARE_REPLACE_PATHS = (
     Path("bin") / COMMAND_NAME,
     Path("software") / "qoder-cli.json",
@@ -1214,13 +1215,53 @@ def validate_archive_member_path(name: str) -> PurePosixPath:
     return path
 
 
+def is_safe_tar_noop_root_directory(member: tarfile.TarInfo) -> bool:
+    return (
+        member.name == "."
+        and member.isdir()
+        and member.size == 0
+        and not member.linkname
+        and not (member.issym() or member.islnk() or member.isdev())
+    )
+
+
+def is_safe_qoder_appledouble_metadata(member: tarfile.TarInfo) -> bool:
+    try:
+        path = validate_archive_member_path(member.name)
+    except QoderCliSetupError:
+        return False
+    return (
+        path.as_posix() == "._qodercli"
+        and member.isfile()
+        and 0 <= member.size <= APPLEDOUBLE_METADATA_MAX_BYTES
+        and not member.linkname
+        and not (member.issym() or member.islnk() or member.isdev())
+    )
+
+
 def safe_tar_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
     members = archive.getmembers()
     if len(members) > SOFTWARE_TREE_MAX_PATHS:
         fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_PATHS}-path limit")
     seen: set[str] = set()
     total_size = 0
+    accepted: list[tarfile.TarInfo] = []
+    seen_noop_root = False
+    seen_appledouble_metadata = False
     for member in members:
+        if is_safe_tar_noop_root_directory(member):
+            if seen_noop_root:
+                fail("duplicate archive member path: .")
+            seen_noop_root = True
+            continue
+        if is_safe_qoder_appledouble_metadata(member):
+            if seen_appledouble_metadata:
+                fail("duplicate archive member path: ._qodercli")
+            seen_appledouble_metadata = True
+            total_size += member.size
+            if total_size > SOFTWARE_TREE_MAX_BYTES:
+                fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_BYTES}-byte limit")
+            continue
         path = validate_archive_member_path(member.name)
         path_key = path.as_posix()
         if path_key in seen:
@@ -1232,7 +1273,8 @@ def safe_tar_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
             total_size += member.size
             if total_size > SOFTWARE_TREE_MAX_BYTES:
                 fail(f"Qoder CLI archive exceeds the {SOFTWARE_TREE_MAX_BYTES}-byte limit")
-    return members
+        accepted.append(member)
+    return accepted
 
 
 def safe_zip_infos(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
