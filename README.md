@@ -93,14 +93,19 @@ so the Ubuntu floor is recorded as `null`.
 - explicit absolute `--target` is required for every target operation;
 - supported-host preflight runs before target filesystem observation;
 - read-only commands do not create product or target lock anchors;
+- lifecycle anchors use a platform-stable same-UID protected root independent
+  of caller `TMPDIR`;
 - target symlinks and managed symlinks/hard links fail closed;
 - archive extraction rejects traversal, symlinks, hard links, device nodes,
   unsafe modes, and oversized trees;
 - state stamps and backups bind to the canonical target;
 - target-owned backups bind exact path, size, and SHA-256 records and reject
   missing, extra, or tampered payloads;
-- mutations use monotonic external coordination, rollback-preserving undo roots,
+- mutations use monotonic external coordination, durable prepare authority
+  before active sources move into undo roots, rollback-preserving undo roots,
   and an immutable cleanup journal for post-commit recursive deletion;
+- `launch` keeps target lifecycle coordination through the launched process
+  lifetime;
 - valid post-commit cleanup failures return success with top-level
   `cleanup_pending: true`; later mutations drain pending cleanup before active
   changes, while read-only commands only report or fail closed.

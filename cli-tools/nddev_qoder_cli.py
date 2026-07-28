@@ -45,6 +45,8 @@ BACKUP_NAME = "NDDEV-QODER-CLI-BACKUP.json"
 CLEANUP_DIR_NAME = ".nddev-qoder-cli-cleanup"
 CLEANUP_JOURNAL_NAME = "NDDEV-QODER-CLI-CLEANUP.json"
 CLEANUP_INTENT_NAME = "NDDEV-QODER-CLI-CLEANUP-INTENT.json"
+CLEANUP_PREPARE_INTENT_NAME = "NDDEV-QODER-CLI-PREPARE-INTENT.json"
+CLEANUP_RETIRED_NAME = "NDDEV-QODER-CLI-CLEANUP-RETIRED.json"
 SOFTWARE_MANIFEST_NAME = "qoder-cli.json"
 BASELINE_REF = ROOT / "references" / "qoder-cli-baseline.json"
 
@@ -79,6 +81,11 @@ SETUP_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 PROFILE_ID_PATTERN = SETUP_ID_PATTERN
 ANCHOR_TEMP_PATTERN = re.compile(r"\.[A-Za-z0-9._-]+\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
 JOURNAL_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-CLEANUP\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
+CLEANUP_INTENT_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-CLEANUP-INTENT\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
+PREPARE_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-PREPARE-INTENT\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
+RETIRED_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-CLEANUP-RETIRED\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
+WORK_ROOT_PATTERN = re.compile(r"\.work-[a-f0-9]{32}-[a-z0-9-]+\Z")
+STAGE_ROOT_PATTERN = re.compile(r"\.stage-[a-f0-9]{32}\Z")
 
 SUPPORTED_PRODUCT_HOST_IDS = (
     "macos-arm64",
@@ -648,13 +655,58 @@ def load_strict_json_file(path: Path, label: str, *, read_only: bool) -> dict[st
 
 
 def fixed_temp_root() -> Path:
-    return Path(tempfile.gettempdir())
+    """Return the platform rendezvous root, independent of caller TMPDIR."""
+
+    candidates = [Path("/private/tmp"), Path("/tmp")] if sys.platform == "darwin" else [Path("/tmp")]
+    root: Optional[Path] = None
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        try:
+            info = resolved.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            continue
+        mode = mode_of(info)
+        if mode & stat.S_ISVTX and os.access(resolved, os.W_OK | os.X_OK):
+            root = resolved
+            break
+    if root is None:
+        fail("no supported stable lifecycle lock root is available")
+    return root
 
 
 def lock_pool_path() -> Path:
     uid = current_uid()
     suffix = str(uid) if uid is not None else "unknown"
     return fixed_temp_root() / f".{PRODUCT_NAME}-{suffix}-lifecycle-locks"
+
+
+def ensure_lock_directory(path: Path) -> None:
+    root = fixed_temp_root()
+    if path_exists_no_follow(path):
+        require_private_directory(path, str(path))
+        return
+    missing: list[Path] = []
+    current = path
+    while not path_exists_no_follow(current):
+        missing.append(current)
+        if current.parent == current:
+            fail("lifecycle lock path escaped the stable root")
+        current = current.parent
+    if current != root and not current.is_relative_to(root):
+        fail("lifecycle lock path escaped the stable root")
+    if current == root:
+        require_directory(root, "stable lifecycle lock root")
+    else:
+        require_private_directory(current, f"{path} existing ancestor")
+    for directory in reversed(missing):
+        directory.mkdir(mode=OWNER_DIRECTORY_MODE)
+        os.chmod(directory, OWNER_DIRECTORY_MODE)
+        fsync_parent(directory)
 
 
 def product_anchor_path() -> Path:
@@ -739,7 +791,7 @@ def product_lifecycle_lock(*, shared: bool, create: bool) -> Iterator[Optional[i
         yield None
         return
     if create:
-        ensure_private_directory(path.parent)
+        ensure_lock_directory(path.parent)
         publish_no_replace_file(
             path,
             canonical_json(anchor_binding("product", path, None)),
@@ -770,7 +822,7 @@ def target_lifecycle_lock(
         yield None
         return
     if create:
-        ensure_private_directory(path.parent)
+        ensure_lock_directory(path.parent)
         publish_no_replace_file(
             path,
             canonical_json(anchor_binding("target", path, canonical_target)),
@@ -1314,6 +1366,14 @@ def cleanup_intent_path(target: Path) -> Path:
     return cleanup_parent(target) / CLEANUP_INTENT_NAME
 
 
+def cleanup_prepare_intent_path(target: Path) -> Path:
+    return cleanup_parent(target) / CLEANUP_PREPARE_INTENT_NAME
+
+
+def cleanup_retired_path(target: Path) -> Path:
+    return cleanup_parent(target) / CLEANUP_RETIRED_NAME
+
+
 def relative_to_target(target: Path, path: Path) -> Path:
     try:
         return path.relative_to(target)
@@ -1383,6 +1443,96 @@ def cleanup_tree_sha256(records: list[dict[str, Any]]) -> str:
     return sha256_bytes(canonical_json(records))
 
 
+def validate_bounded_relative(raw: str, label: str, *, first_pattern: Optional[re.Pattern[str]] = None) -> Path:
+    path = normalize_relative_path(raw, label)
+    if len(path.parts) > 24 or any(len(part) > 128 for part in path.parts):
+        fail(f"{label} path exceeds bound")
+    if first_pattern is not None and not first_pattern.fullmatch(path.parts[0]):
+        fail(f"{label} path is outside the declared manager namespace")
+    return path
+
+
+def anchored_path(target: Path, anchor: str, relative: str, label: str) -> Path:
+    path = validate_bounded_relative(
+        relative,
+        label,
+        first_pattern=WORK_ROOT_PATTERN if anchor == CLEANUP_DIR_NAME else None,
+    )
+    if anchor == "target":
+        return target / path
+    if anchor == CLEANUP_DIR_NAME:
+        return cleanup_parent(target) / path
+    fail(f"{label} anchor is unsupported")
+
+
+def object_identity_record(path: Path, anchor_root: Path, label: str) -> dict[str, Any]:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        fail(f"{label} is missing")
+    if stat.S_ISLNK(info.st_mode):
+        fail(f"{label} must not be a symlink")
+    kind = "directory" if stat.S_ISDIR(info.st_mode) else "file" if stat.S_ISREG(info.st_mode) else "other"
+    if kind == "other":
+        fail(f"{label} has unsupported object kind")
+    try:
+        relative = "." if path == anchor_root else path.relative_to(anchor_root).as_posix()
+    except ValueError:
+        fail(f"{label} is outside its declared anchor")
+    record: dict[str, Any] = {
+        "relative_path": relative,
+        "kind": kind,
+        "mode": mode_of(info),
+        "uid": owner_of(info),
+        "nlink": info.st_nlink,
+        "dev": info.st_dev,
+        "ino": info.st_ino,
+        "size": info.st_size,
+        "mtime_ns": info.st_mtime_ns,
+    }
+    if kind == "file":
+        content, _ = read_regular_file(path, label, max_bytes=MAX_CLEANUP_TREE_BYTES, allow_nlink=None)
+        record["sha256"] = sha256_bytes(content)
+    return record
+
+
+def validate_identity_record(path: Path, record: dict[str, Any], label: str, *, stable_only: bool) -> None:
+    required = {"relative_path", "kind", "mode", "uid", "nlink", "dev", "ino", "size", "mtime_ns"}
+    if record.get("kind") == "file":
+        required.add("sha256")
+    require_exact_keys(record, required, label)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        fail(f"{label} is missing")
+    if stat.S_ISLNK(info.st_mode):
+        fail(f"{label} must not be a symlink")
+    kind = "directory" if stat.S_ISDIR(info.st_mode) else "file" if stat.S_ISREG(info.st_mode) else "other"
+    if kind != record["kind"]:
+        fail(f"{label} kind changed")
+    if identity_of(info) != (record["dev"], record["ino"]):
+        fail(f"{label} identity changed")
+    if owner_of(info) != record["uid"] or mode_of(info) != record["mode"]:
+        fail(f"{label} ownership or mode changed")
+    if stable_only:
+        return
+    if info.st_nlink != record["nlink"] or info.st_size != record["size"] or info.st_mtime_ns != record["mtime_ns"]:
+        fail(f"{label} metadata changed")
+    if record["kind"] == "file":
+        content, _ = read_regular_file(path, label, max_bytes=MAX_CLEANUP_TREE_BYTES, allow_nlink=None)
+        if sha256_bytes(content) != record["sha256"]:
+            fail(f"{label} content changed")
+
+
+def restore_parent_metadata(path: Path, record: dict[str, Any]) -> None:
+    if not path_exists_no_follow(path):
+        return
+    with contextlib.suppress(OSError):
+        os.chmod(path, int(record["mode"]))
+    with contextlib.suppress(OSError):
+        os.utime(path, ns=(int(record["mtime_ns"]), int(record["mtime_ns"])))
+
+
 def validate_cleanup_relative(relative: str) -> Path:
     path = normalize_relative_path(relative, "cleanup")
     if len(path.parts) > 4 or any(len(part) > 96 for part in path.parts):
@@ -1447,6 +1597,379 @@ def validate_cleanup_records(root: Path, records: list[dict[str, Any]], *, allow
             fail("cleanup tombstone contains unsupported object kind")
 
 
+def cleanup_journal_allowed_relatives(journal: dict[str, Any]) -> set[str]:
+    allowed = {CLEANUP_JOURNAL_NAME, CLEANUP_INTENT_NAME, CLEANUP_PREPARE_INTENT_NAME, CLEANUP_RETIRED_NAME}
+    for entry in journal["entries"]:
+        root_relative = validate_cleanup_relative(entry["relative_path"])
+        current = Path()
+        for part in root_relative.parts:
+            current = current / part
+            allowed.add(current.as_posix())
+        for record in entry["records"]:
+            if record["relative_path"] == ".":
+                continue
+            record_relative = normalize_relative_path(record["relative_path"], "cleanup record")
+            current = root_relative
+            for part in record_relative.parts:
+                current = current / part
+                allowed.add(current.as_posix())
+    return allowed
+
+
+def remove_empty_cleanup_ancestors(path: Path, stop: Path) -> None:
+    current = path
+    while current != stop and current.is_relative_to(stop):
+        if not path_exists_no_follow(current):
+            current = current.parent
+            continue
+        info = current.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            fail("cleanup source ancestor has unsafe kind")
+        try:
+            current.rmdir()
+        except OSError:
+            if any(current.iterdir()):
+                return
+            raise
+        fault("cleanup-source-empty-dir-rmdir")
+        fsync_parent(current)
+        fault("cleanup-source-empty-dir-parent-fsync")
+        current = current.parent
+
+
+def validate_prepare_work_relative(relative: str) -> Path:
+    path = validate_bounded_relative(relative, "prepare hold", first_pattern=WORK_ROOT_PATTERN)
+    if len(path.parts) < 3:
+        fail("prepare hold path is too shallow")
+    return path
+
+
+def validate_prepare_work_root_relative(relative: str) -> Path:
+    path = validate_bounded_relative(relative, "prepare work root", first_pattern=WORK_ROOT_PATTERN)
+    if len(path.parts) != 1:
+        fail("prepare work root path is malformed")
+    return path
+
+
+def validate_cleanup_source_relative(relative: str) -> Path:
+    path = validate_bounded_relative(relative, "cleanup source")
+    if not (WORK_ROOT_PATTERN.fullmatch(path.parts[0]) or STAGE_ROOT_PATTERN.fullmatch(path.parts[0])):
+        fail("cleanup source path is outside the declared manager namespace")
+    return path
+
+
+def validate_prepare_source_relative(relative: str) -> Path:
+    path = validate_bounded_relative(relative, "prepare source")
+    if path.parts[0] == CLEANUP_DIR_NAME:
+        fail("prepare source path must be active target state")
+    return path
+
+
+def validate_prepare_intent(target: Path, intent: dict[str, Any]) -> None:
+    required = {
+        "schema_version",
+        "product_name",
+        "build_version",
+        "canonical_target",
+        "cleanup_parent",
+        "transaction_id",
+        "work_relative_path",
+        "target_root",
+        "entry_count",
+        "entries",
+    }
+    require_exact_keys(intent, required, "cleanup prepare intent")
+    if (
+        intent["schema_version"] != 1
+        or intent["product_name"] != PRODUCT_NAME
+        or intent["build_version"] != VERSION
+        or intent["canonical_target"] != str(target)
+        or intent["cleanup_parent"] != CLEANUP_DIR_NAME
+    ):
+        fail("cleanup prepare intent is not bound to this target")
+    work_relative = validate_prepare_work_root_relative(intent["work_relative_path"])
+    validate_identity_record(target, intent["target_root"], "cleanup prepare target root", stable_only=True)
+    entries = intent["entries"]
+    if not isinstance(entries, list) or not 0 < len(entries) <= MAX_CLEANUP_ENTRIES:
+        fail("cleanup prepare intent entry list is malformed")
+    if intent["entry_count"] != len(entries):
+        fail("cleanup prepare intent entry_count mismatch")
+    seen_sources: set[str] = set()
+    seen_holds: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            fail("cleanup prepare intent entry is malformed")
+        require_exact_keys(
+            entry,
+            {
+                "source_anchor",
+                "source_relative_path",
+                "hold_anchor",
+                "hold_relative_path",
+                "source_kind",
+                "source_parent",
+                "hold_parent",
+                "source_tree_sha256",
+                "source_records",
+            },
+            "cleanup prepare intent entry",
+        )
+        if entry["source_anchor"] != "target" or entry["hold_anchor"] != CLEANUP_DIR_NAME:
+            fail("cleanup prepare intent anchors are malformed")
+        if entry["source_kind"] not in {"managed-undo", "software-undo", "backup-undo"}:
+            fail("cleanup prepare intent source kind is unsupported")
+        source_relative = validate_prepare_source_relative(entry["source_relative_path"])
+        hold_relative = validate_prepare_work_relative(entry["hold_relative_path"])
+        if hold_relative.parts[0] != work_relative.parts[0]:
+            fail("cleanup prepare intent hold path is outside its work root")
+        source_key = source_relative.as_posix()
+        hold_key = hold_relative.as_posix()
+        if source_key in seen_sources or hold_key in seen_holds:
+            fail("cleanup prepare intent contains duplicate paths")
+        seen_sources.add(source_key)
+        seen_holds.add(hold_key)
+        records = entry["source_records"]
+        if cleanup_tree_sha256(records) != entry["source_tree_sha256"]:
+            fail("cleanup prepare intent tree digest mismatch")
+        source = target / source_relative
+        hold = cleanup_parent(target) / hold_relative
+        source_present = path_exists_no_follow(source)
+        hold_present = path_exists_no_follow(hold)
+        if source_present and hold_present:
+            fail("cleanup prepare intent has both source and hold visible")
+        if not source_present and not hold_present:
+            fail("cleanup prepare intent lost both source and hold")
+        if source_present:
+            validate_cleanup_records(source, records, allow_partial=False)
+            validate_identity_record(source.parent, entry["source_parent"], "cleanup prepare source parent", stable_only=True)
+        if hold_present:
+            validate_cleanup_records(hold, records, allow_partial=False)
+            validate_identity_record(hold.parent, entry["hold_parent"], "cleanup prepare hold parent", stable_only=True)
+
+
+def load_prepare_intent(target: Path, *, read_only: bool) -> Optional[dict[str, Any]]:
+    path = cleanup_prepare_intent_path(target)
+    if not path_exists_no_follow(path):
+        return None
+    if not read_only:
+        recover_hardlink_publication_alias(
+            path,
+            temp_pattern=PREPARE_TEMP_PATTERN,
+            label="cleanup prepare intent",
+        )
+    intent = load_strict_json_file(path, "cleanup prepare intent", read_only=read_only)
+    validate_prepare_intent(target, intent)
+    return intent
+
+
+def remove_empty_prepare_work_root(target: Path, intent: dict[str, Any]) -> None:
+    root = cleanup_parent(target) / validate_prepare_work_root_relative(intent["work_relative_path"])
+    if not path_exists_no_follow(root):
+        return
+    for path in sorted([root, *root.rglob("*")], key=lambda item: len(item.parts), reverse=True):
+        if not path_exists_no_follow(path):
+            continue
+        info = path.lstat()
+        if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+            try:
+                path.rmdir()
+            except OSError as exc:
+                fail(f"cleanup prepare work root is not empty: {exc}")
+            fsync_parent(path)
+        else:
+            fail("cleanup prepare work root contains unknown residue")
+
+
+def recover_prepare_intent_before_mutation(target: Path) -> bool:
+    intent = load_prepare_intent(target, read_only=False)
+    if intent is None:
+        return False
+    parent_restores: list[tuple[Path, dict[str, Any]]] = []
+    for entry in reversed(intent["entries"]):
+        source = target / validate_prepare_source_relative(entry["source_relative_path"])
+        hold = cleanup_parent(target) / validate_prepare_work_relative(entry["hold_relative_path"])
+        parent_restores.append((source.parent, entry["source_parent"]))
+        if path_exists_no_follow(hold):
+            if path_exists_no_follow(source):
+                fail("cleanup prepare recovery found both source and hold")
+            ensure_private_parent(source, f"cleanup prepare restore {source}")
+            os.replace(hold, source)
+            fault("cleanup-prepare-restore-move")
+            fsync_parent(source)
+            fault("cleanup-prepare-restore-source-parent-fsync")
+            fsync_parent(hold)
+            fault("cleanup-prepare-restore-hold-parent-fsync")
+        elif not path_exists_no_follow(source):
+            fail("cleanup prepare recovery lost both source and hold")
+        validate_cleanup_records(source, entry["source_records"], allow_partial=False)
+    remove_empty_prepare_work_root(target, intent)
+    cleanup_prepare_intent_path(target).unlink()
+    fault("cleanup-prepare-intent-unlink")
+    fsync_parent(cleanup_prepare_intent_path(target))
+    fault("cleanup-prepare-intent-parent-fsync")
+    if path_exists_no_follow(cleanup_parent(target)) and not any(cleanup_parent(target).iterdir()):
+        cleanup_parent(target).rmdir()
+        fsync_parent(cleanup_parent(target))
+    for parent, record in parent_restores:
+        restore_parent_metadata(parent, record)
+    restore_parent_metadata(target, intent["target_root"])
+    return True
+
+
+def validate_cleanup_intent(target: Path, intent: dict[str, Any]) -> None:
+    required = {
+        "schema_version",
+        "product_name",
+        "build_version",
+        "canonical_target",
+        "cleanup_parent",
+        "transaction_id",
+        "entry_count",
+        "entries",
+    }
+    require_exact_keys(intent, required, "cleanup promotion intent")
+    if (
+        intent["schema_version"] != 1
+        or intent["product_name"] != PRODUCT_NAME
+        or intent["build_version"] != VERSION
+        or intent["canonical_target"] != str(target)
+        or intent["cleanup_parent"] != CLEANUP_DIR_NAME
+    ):
+        fail("cleanup promotion intent is not bound to this target")
+    entries = intent["entries"]
+    if not isinstance(entries, list) or not 0 < len(entries) <= MAX_CLEANUP_ENTRIES:
+        fail("cleanup promotion intent entry list is malformed")
+    if intent["entry_count"] != len(entries):
+        fail("cleanup promotion intent entry_count mismatch")
+    seen_sources: set[str] = set()
+    seen_destinations: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            fail("cleanup promotion intent entry is malformed")
+        require_exact_keys(
+            entry,
+            {
+                "source_anchor",
+                "source_relative_path",
+                "destination_relative_path",
+                "source_kind",
+                "source_parent",
+                "destination_parent",
+                "source_tree_sha256",
+                "source_records",
+            },
+            "cleanup promotion intent entry",
+        )
+        if entry["source_anchor"] != CLEANUP_DIR_NAME:
+            fail("cleanup promotion intent source anchor is malformed")
+        if entry["source_kind"] not in {"managed-undo", "software-undo", "backup-undo", "stage-undo"}:
+            fail("cleanup promotion intent source kind is unsupported")
+        source_relative = validate_cleanup_source_relative(entry["source_relative_path"])
+        destination_relative = validate_cleanup_relative(entry["destination_relative_path"])
+        source_key = source_relative.as_posix()
+        destination_key = destination_relative.as_posix()
+        if source_key in seen_sources or destination_key in seen_destinations:
+            fail("cleanup promotion intent contains duplicate paths")
+        seen_sources.add(source_key)
+        seen_destinations.add(destination_key)
+        records = entry["source_records"]
+        if cleanup_tree_sha256(records) != entry["source_tree_sha256"]:
+            fail("cleanup promotion intent tree digest mismatch")
+        source = cleanup_parent(target) / source_relative
+        destination = cleanup_parent(target) / destination_relative
+        source_present = path_exists_no_follow(source)
+        destination_present = path_exists_no_follow(destination)
+        if source_present and destination_present:
+            fail("cleanup promotion intent has both source and tombstone visible")
+        if not source_present and not destination_present:
+            fail("cleanup promotion intent lost both source and tombstone")
+        if source_present:
+            validate_cleanup_records(source, records, allow_partial=False)
+            validate_identity_record(source.parent, entry["source_parent"], "cleanup promotion source parent", stable_only=True)
+        if destination_present:
+            validate_cleanup_records(destination, records, allow_partial=False)
+            validate_identity_record(
+                destination.parent,
+                entry["destination_parent"],
+                "cleanup promotion destination parent",
+                stable_only=True,
+            )
+
+
+def load_cleanup_intent(target: Path, *, read_only: bool) -> Optional[dict[str, Any]]:
+    path = cleanup_intent_path(target)
+    if not path_exists_no_follow(path):
+        return None
+    if not read_only:
+        recover_hardlink_publication_alias(
+            path,
+            temp_pattern=CLEANUP_INTENT_TEMP_PATTERN,
+            label="cleanup promotion intent",
+        )
+    intent = load_strict_json_file(path, "cleanup promotion intent", read_only=read_only)
+    validate_cleanup_intent(target, intent)
+    return intent
+
+
+def journal_from_cleanup_intent(target: Path, intent: dict[str, Any]) -> dict[str, Any]:
+    entries = [
+        {
+            "relative_path": validate_cleanup_relative(entry["destination_relative_path"]).as_posix(),
+            "source_kind": entry["source_kind"],
+            "tree_sha256": entry["source_tree_sha256"],
+            "records": entry["source_records"],
+        }
+        for entry in intent["entries"]
+    ]
+    journal = {
+        "schema_version": 1,
+        "product_name": PRODUCT_NAME,
+        "build_version": VERSION,
+        "canonical_target": str(target),
+        "cleanup_parent": CLEANUP_DIR_NAME,
+        "transaction_id": intent["transaction_id"],
+        "entry_count": len(entries),
+        "entries": entries,
+    }
+    validate_cleanup_journal(target, journal)
+    return journal
+
+
+def recover_cleanup_intent_before_mutation(target: Path) -> bool:
+    if path_exists_no_follow(cleanup_journal_path(target)):
+        return False
+    intent = load_cleanup_intent(target, read_only=False)
+    if intent is None:
+        return False
+    for entry in intent["entries"]:
+        source = cleanup_parent(target) / validate_cleanup_source_relative(entry["source_relative_path"])
+        destination = cleanup_parent(target) / validate_cleanup_relative(entry["destination_relative_path"])
+        if path_exists_no_follow(source):
+            if path_exists_no_follow(destination):
+                fail("cleanup promotion recovery found both source and tombstone")
+            ensure_private_parent(destination, f"cleanup promotion tombstone {destination}")
+            os.replace(source, destination)
+            fault("cleanup-promotion-recover-move")
+            fsync_parent(source)
+            fault("cleanup-promotion-recover-source-parent-fsync")
+            fsync_parent(destination)
+            fault("cleanup-promotion-recover-destination-parent-fsync")
+            remove_empty_cleanup_ancestors(source.parent, cleanup_parent(target))
+        elif not path_exists_no_follow(destination):
+            fail("cleanup promotion recovery lost both source and tombstone")
+        validate_cleanup_records(destination, entry["source_records"], allow_partial=False)
+    journal = journal_from_cleanup_intent(target, intent)
+    created = publish_no_replace_file(
+        cleanup_journal_path(target),
+        canonical_json(journal),
+        temp_pattern=JOURNAL_TEMP_PATTERN,
+        label="cleanup-journal",
+    )
+    if not created:
+        fail("cleanup journal appeared during promotion recovery")
+    return True
+
+
 def load_cleanup_journal(target: Path, *, read_only: bool) -> Optional[dict[str, Any]]:
     journal_path = cleanup_journal_path(target)
     intent_path = cleanup_intent_path(target)
@@ -1491,7 +2014,6 @@ def validate_cleanup_journal(target: Path, journal: dict[str, Any]) -> None:
     if journal["entry_count"] != len(entries):
         fail("cleanup journal entry_count mismatch")
     seen: set[str] = set()
-    allowed_top = {CLEANUP_JOURNAL_NAME, CLEANUP_INTENT_NAME}
     for entry in entries:
         if not isinstance(entry, dict):
             fail("cleanup journal entry is malformed")
@@ -1510,13 +2032,75 @@ def validate_cleanup_journal(target: Path, journal: dict[str, Any]) -> None:
         if cleanup_tree_sha256(records) != entry["tree_sha256"]:
             fail("cleanup journal tree digest mismatch")
         validate_cleanup_records(cleanup_parent(target) / relative, records, allow_partial=True)
-        allowed_top.add(relative.parts[0])
     if path_exists_no_follow(cleanup_parent(target)):
+        allowed_relatives = cleanup_journal_allowed_relatives(journal)
         for child in cleanup_parent(target).iterdir():
             if child.name.startswith(".NDDEV-QODER-CLI-CLEANUP.json.pubtmp."):
                 fail("cleanup journal publication alias requires mutation recovery")
-            if child.name not in allowed_top and child.name not in {"tombstones"}:
-                fail(f"cleanup directory contains unknown state: {child.name}")
+            if child.name.startswith(".NDDEV-QODER-CLI-CLEANUP-INTENT.json.pubtmp."):
+                fail("cleanup intent publication alias requires mutation recovery")
+            if child.name.startswith(".NDDEV-QODER-CLI-CLEANUP-RETIRED.json.pubtmp."):
+                fail("cleanup retired publication alias requires mutation recovery")
+        for path in cleanup_parent(target).rglob("*"):
+            relative = path.relative_to(cleanup_parent(target)).as_posix()
+            if relative not in allowed_relatives:
+                fail(f"cleanup directory contains unknown state: {relative}")
+
+
+def build_cleanup_retired_marker(target: Path, journal: dict[str, Any]) -> dict[str, Any]:
+    marker = {
+        "schema_version": 1,
+        "product_name": PRODUCT_NAME,
+        "build_version": VERSION,
+        "canonical_target": str(target),
+        "cleanup_parent": CLEANUP_DIR_NAME,
+        "transaction_id": journal["transaction_id"],
+        "entry_count": journal["entry_count"],
+        "journal_sha256": sha256_bytes(canonical_json(journal)),
+    }
+    validate_cleanup_retired_marker(target, marker)
+    return marker
+
+
+def validate_cleanup_retired_marker(target: Path, marker: dict[str, Any]) -> None:
+    required = {
+        "schema_version",
+        "product_name",
+        "build_version",
+        "canonical_target",
+        "cleanup_parent",
+        "transaction_id",
+        "entry_count",
+        "journal_sha256",
+    }
+    require_exact_keys(marker, required, "cleanup retired marker")
+    if (
+        marker["schema_version"] != 1
+        or marker["product_name"] != PRODUCT_NAME
+        or marker["build_version"] != VERSION
+        or marker["canonical_target"] != str(target)
+        or marker["cleanup_parent"] != CLEANUP_DIR_NAME
+        or not isinstance(marker["transaction_id"], str)
+        or not isinstance(marker["entry_count"], int)
+        or not isinstance(marker["journal_sha256"], str)
+        or not re.fullmatch(r"[a-f0-9]{64}", marker["journal_sha256"])
+    ):
+        fail("cleanup retired marker is malformed or mismatched")
+
+
+def load_cleanup_retired_marker(target: Path, *, read_only: bool) -> Optional[dict[str, Any]]:
+    path = cleanup_retired_path(target)
+    if not path_exists_no_follow(path):
+        return None
+    if not read_only:
+        recover_hardlink_publication_alias(
+            path,
+            temp_pattern=RETIRED_TEMP_PATTERN,
+            label="cleanup retired marker",
+        )
+    marker = load_strict_json_file(path, "cleanup retired marker", read_only=read_only)
+    validate_cleanup_retired_marker(target, marker)
+    return marker
 
 
 def cleanup_pending_state(target: Path, *, read_only: bool) -> tuple[bool, dict[str, Any]]:
@@ -1525,9 +2109,24 @@ def cleanup_pending_state(target: Path, *, read_only: bool) -> tuple[bool, dict[
     if not path_exists_no_follow(cleanup_parent(target)):
         return False, {"cleanup_pending": False}
     require_private_directory(cleanup_parent(target), "cleanup parent")
+    if path_exists_no_follow(cleanup_prepare_intent_path(target)) and not path_exists_no_follow(cleanup_journal_path(target)):
+        fail("cleanup prepare intent exists without a final journal")
+    retired = load_cleanup_retired_marker(target, read_only=read_only)
+    if retired is not None and not path_exists_no_follow(cleanup_journal_path(target)):
+        return True, {
+            "cleanup_pending": True,
+            "cleanup": {
+                "entry_count": retired["entry_count"],
+                "transaction_id": retired["transaction_id"],
+                "phase": "retired",
+            },
+        }
     journal = load_cleanup_journal(target, read_only=read_only)
     if journal is None:
-        return False, {"cleanup_pending": False}
+        children = sorted(child.name for child in cleanup_parent(target).iterdir())
+        if children:
+            fail("cleanup directory contains uncommitted state")
+        fail("cleanup directory exists without cleanup authority")
     return True, {
         "cleanup_pending": True,
         "cleanup": {
@@ -1583,42 +2182,160 @@ def delete_cleanup_entry(target: Path, entry: dict[str, Any]) -> None:
             fail("cleanup tombstone contains unsupported object kind")
 
 
-def drain_cleanup_before_mutation(target: Path) -> bool:
-    if not path_exists_no_follow(target):
+def remove_empty_cleanup_dirs(target: Path) -> None:
+    parent = cleanup_parent(target)
+    if not path_exists_no_follow(parent):
+        return
+    for path in sorted([path for path in parent.rglob("*") if path.is_dir() and not path.is_symlink()], key=lambda item: len(item.parts), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            continue
+        fsync_parent(path)
+    parent.rmdir()
+    fsync_parent(parent)
+
+
+def delete_bounded_uncommitted_tree(path: Path) -> None:
+    if not path_exists_no_follow(path):
+        return
+    first = path.name
+    if not (WORK_ROOT_PATTERN.fullmatch(first) or STAGE_ROOT_PATTERN.fullmatch(first)):
+        fail(f"uncommitted cleanup residue is outside manager namespace: {first}")
+    for entry in sorted([path, *path.rglob("*")], key=lambda item: len(item.parts), reverse=True):
+        if not path_exists_no_follow(entry):
+            continue
+        info = entry.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            fail("uncommitted cleanup residue contains a symlink")
+        if stat.S_ISDIR(info.st_mode):
+            if not is_owner_private_directory(info):
+                fail("uncommitted cleanup residue directory is not private")
+            entry.rmdir()
+        elif stat.S_ISREG(info.st_mode):
+            if owner_of(info) != current_uid():
+                fail("uncommitted cleanup residue file owner is invalid")
+            entry.unlink()
+        else:
+            fail("uncommitted cleanup residue contains unsupported object")
+        fsync_parent(entry)
+
+
+def recover_uncommitted_cleanup_residue_before_mutation(target: Path) -> bool:
+    parent = cleanup_parent(target)
+    if not path_exists_no_follow(parent):
         return False
-    if not path_exists_no_follow(cleanup_parent(target)):
+    authority_paths = (
+        cleanup_prepare_intent_path(target),
+        cleanup_intent_path(target),
+        cleanup_journal_path(target),
+        cleanup_retired_path(target),
+    )
+    if any(path_exists_no_follow(path) for path in authority_paths):
         return False
-    pending, details = cleanup_pending_state(target, read_only=False)
-    if not pending:
+    require_private_directory(parent, "cleanup parent")
+    children = sorted(parent.iterdir(), key=lambda item: item.name)
+    if not children:
+        parent.rmdir()
+        fsync_parent(parent)
+        return True
+    for child in children:
+        delete_bounded_uncommitted_tree(child)
+    parent.rmdir()
+    fsync_parent(parent)
+    return True
+
+
+def finalize_retired_cleanup(target: Path) -> bool:
+    marker = load_cleanup_retired_marker(target, read_only=False)
+    if marker is None or path_exists_no_follow(cleanup_journal_path(target)):
         return False
-    journal = load_cleanup_journal(target, read_only=False)
-    assert journal is not None
-    for entry in journal["entries"]:
-        delete_cleanup_entry(target, entry)
-    cleanup_journal_path(target).unlink()
-    fault("cleanup-journal-unlink")
-    fsync_parent(cleanup_journal_path(target))
-    fault("cleanup-journal-parent-fsync")
-    with contextlib.suppress(FileNotFoundError):
-        cleanup_intent_path(target).unlink()
-        fsync_parent(cleanup_intent_path(target))
-    if path_exists_no_follow(cleanup_parent(target)):
+    parent = cleanup_parent(target)
+    if path_exists_no_follow(parent):
         for directory in sorted(
-            [path for path in cleanup_parent(target).rglob("*") if path.is_dir() and not path.is_symlink()],
+            [path for path in parent.rglob("*") if path.is_dir() and not path.is_symlink()],
             key=lambda item: len(item.parts),
             reverse=True,
         ):
             with contextlib.suppress(OSError):
                 directory.rmdir()
                 fsync_parent(directory)
-    with contextlib.suppress(OSError):
-        cleanup_parent(target).rmdir()
-        fsync_parent(cleanup_parent(target))
+    for path, name in (
+        (cleanup_intent_path(target), "cleanup-intent"),
+        (cleanup_prepare_intent_path(target), "cleanup-prepare-intent"),
+    ):
+        if path_exists_no_follow(path):
+            path.unlink()
+            fault(f"{name}-unlink")
+            fsync_parent(path)
+            fault(f"{name}-parent-fsync")
+    if path_exists_no_follow(parent):
+        for directory in sorted(
+            [path for path in parent.rglob("*") if path.is_dir() and not path.is_symlink()],
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+                fsync_parent(directory)
+        children = sorted(child.name for child in parent.iterdir() if child != cleanup_retired_path(target))
+        if children:
+            fail(f"cleanup retired state has unexpected residue: {children}")
+    cleanup_retired_path(target).unlink()
+    fault("cleanup-retired-marker-unlink")
+    fsync_parent(cleanup_retired_path(target))
+    fault("cleanup-retired-marker-parent-fsync")
+    if path_exists_no_follow(parent):
+        try:
+            parent.rmdir()
+            fsync_parent(parent)
+        except OSError:
+            pass
+    return True
+
+
+def drain_cleanup_before_mutation(target: Path) -> bool:
+    if not path_exists_no_follow(target):
+        return False
+    if not path_exists_no_follow(cleanup_parent(target)):
+        return False
+    recovered = False
+    if path_exists_no_follow(cleanup_intent_path(target)) and not path_exists_no_follow(cleanup_journal_path(target)):
+        recovered = recover_cleanup_intent_before_mutation(target)
+    elif not path_exists_no_follow(cleanup_journal_path(target)):
+        recovered = recover_prepare_intent_before_mutation(target)
+    if finalize_retired_cleanup(target):
+        return True
+    if not path_exists_no_follow(cleanup_parent(target)):
+        return recovered
+    recovered = recover_uncommitted_cleanup_residue_before_mutation(target) or recovered
+    if not path_exists_no_follow(cleanup_parent(target)):
+        return recovered
+    pending, details = cleanup_pending_state(target, read_only=False)
+    if not pending:
+        return recovered
+    journal = load_cleanup_journal(target, read_only=False)
+    assert journal is not None
+    for entry in journal["entries"]:
+        delete_cleanup_entry(target, entry)
+    if not path_exists_no_follow(cleanup_retired_path(target)):
+        marker = build_cleanup_retired_marker(target, journal)
+        publish_no_replace_file(
+            cleanup_retired_path(target),
+            canonical_json(marker),
+            temp_pattern=RETIRED_TEMP_PATTERN,
+            label="cleanup-retired",
+        )
+    cleanup_journal_path(target).unlink()
+    fault("cleanup-journal-unlink")
+    fsync_parent(cleanup_journal_path(target))
+    fault("cleanup-journal-parent-fsync")
+    finalize_retired_cleanup(target)
     return bool(details["cleanup_pending"])
 
 
 def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bool:
-    live_sources = [(source, kind) for source, kind in sources if path_exists_no_follow(source)]
+    live_sources = [(source.resolve(strict=True), kind) for source, kind in sources if path_exists_no_follow(source)]
     if not live_sources:
         return False
     parent = cleanup_parent(target)
@@ -1628,6 +2345,31 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
     transaction_id = uuid.uuid4().hex
     tombstone_parent = parent / "tombstones" / transaction_id
     ensure_private_directory(tombstone_parent.parent)
+    intent_entries: list[dict[str, Any]] = []
+    for index, (source, kind) in enumerate(live_sources):
+        if kind not in {"managed-undo", "software-undo", "backup-undo", "stage-undo"}:
+            fail(f"unsupported cleanup source kind: {kind}")
+        source_relative = source.relative_to(parent)
+        validate_cleanup_source_relative(source_relative.as_posix())
+        destination = tombstone_parent / f"{index}-{kind}"
+        ensure_private_parent(destination, f"cleanup tombstone {destination}")
+        records = tree_records(source)
+        intent_entries.append(
+            {
+                "source_anchor": CLEANUP_DIR_NAME,
+                "source_relative_path": source_relative.as_posix(),
+                "destination_relative_path": destination.relative_to(parent).as_posix(),
+                "source_kind": kind,
+                "source_parent": object_identity_record(source.parent, parent, "cleanup promotion source parent"),
+                "destination_parent": object_identity_record(
+                    destination.parent,
+                    parent,
+                    "cleanup promotion destination parent",
+                ),
+                "source_tree_sha256": cleanup_tree_sha256(records),
+                "source_records": records,
+            }
+        )
     intent = {
         "schema_version": 1,
         "product_name": PRODUCT_NAME,
@@ -1636,28 +2378,21 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
         "cleanup_parent": CLEANUP_DIR_NAME,
         "transaction_id": transaction_id,
         "entry_count": len(live_sources),
-        "entries": [
-            {
-                "source_anchor": CLEANUP_DIR_NAME,
-                "source_relative_path": source.relative_to(parent).as_posix(),
-                "destination_relative_path": (Path("tombstones") / transaction_id / f"{index}-{kind}").as_posix(),
-                "source_kind": kind,
-            }
-            for index, (source, kind) in enumerate(live_sources)
-        ],
+        "entries": intent_entries,
     }
-    publish_no_replace_file(
+    validate_cleanup_intent(target, intent)
+    created = publish_no_replace_file(
         cleanup_intent_path(target),
         canonical_json(intent),
-        temp_pattern=JOURNAL_TEMP_PATTERN,
+        temp_pattern=CLEANUP_INTENT_TEMP_PATTERN,
         label="cleanup-intent",
     )
+    if not created:
+        fail("cleanup intent already exists")
     moved: list[tuple[Path, Path]] = []
     try:
-        entries: list[dict[str, Any]] = []
-        for index, (source, kind) in enumerate(live_sources):
-            destination = tombstone_parent / f"{index}-{kind}"
-            ensure_private_parent(destination, f"cleanup tombstone {destination}")
+        for entry, (source, _kind) in zip(intent_entries, live_sources):
+            destination = parent / validate_cleanup_relative(entry["destination_relative_path"])
             os.replace(source, destination)
             moved.append((source, destination))
             fault("cleanup-source-move")
@@ -1665,34 +2400,9 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
             fault("cleanup-source-parent-fsync")
             fsync_parent(destination)
             fault("cleanup-destination-parent-fsync")
-            records = tree_records(destination)
-            entries.append(
-                {
-                    "relative_path": destination.relative_to(parent).as_posix(),
-                    "source_kind": kind,
-                    "tree_sha256": cleanup_tree_sha256(records),
-                    "records": records,
-                }
-            )
-        for source, _kind in live_sources:
-            current = source.parent
-            while current != parent:
-                try:
-                    current.rmdir()
-                    fsync_parent(current)
-                except OSError:
-                    break
-                current = current.parent
-        journal = {
-            "schema_version": 1,
-            "product_name": PRODUCT_NAME,
-            "build_version": VERSION,
-            "canonical_target": str(target),
-            "cleanup_parent": CLEANUP_DIR_NAME,
-            "transaction_id": transaction_id,
-            "entry_count": len(entries),
-            "entries": entries,
-        }
+            validate_cleanup_records(destination, entry["source_records"], allow_partial=False)
+            remove_empty_cleanup_ancestors(source.parent, parent)
+        journal = journal_from_cleanup_intent(target, intent)
         validate_cleanup_journal(target, journal)
         publish_no_replace_file(
             cleanup_journal_path(target),
@@ -1712,10 +2422,6 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
             fsync_parent(cleanup_intent_path(target))
         raise
     try:
-        cleanup_intent_path(target).unlink()
-        fault("cleanup-intent-unlink")
-        fsync_parent(cleanup_intent_path(target))
-        fault("cleanup-intent-parent-fsync")
         drain_cleanup_before_mutation(target)
     except BaseException as exc:
         raise CleanupFailure(f"post-commit cleanup is pending: {exc}") from exc
@@ -1726,13 +2432,16 @@ class UndoTransaction:
     def __init__(self, target: Path, label: str) -> None:
         self.target = target
         self.label = label
+        self.transaction_id = uuid.uuid4().hex
         self.parent_records: dict[Path, tuple[int, int]] = {}
         self.created_dirs: list[Path] = []
         self.created_files: list[Path] = []
         self.moved_to_hold: list[tuple[Path, Path]] = []
         self.committed_sources: list[tuple[Path, str]] = []
+        self.prepared_holds: dict[tuple[str, str], Path] = {}
+        self.target_root_record = object_identity_record(target, target, "target root")
         ensure_private_directory(cleanup_parent(target))
-        self.work = cleanup_parent(target) / f".work-{uuid.uuid4().hex}-{label}"
+        self.work = cleanup_parent(target) / f".work-{self.transaction_id}-{label}"
         self.work.mkdir(mode=OWNER_DIRECTORY_MODE)
         os.chmod(self.work, OWNER_DIRECTORY_MODE)
         fsync_parent(self.work)
@@ -1764,12 +2473,71 @@ class UndoTransaction:
             fsync_parent(directory)
             self.created_dirs.append(directory)
 
+    def prepare_hold_moves(self, candidates: list[tuple[Path, str]]) -> list[tuple[Path, str]]:
+        if self.prepared_holds:
+            fail("cleanup prepare authority already exists for this transaction")
+        live: list[tuple[Path, str]] = []
+        entries: list[dict[str, Any]] = []
+        for relative, kind in candidates:
+            if relative.is_absolute() or ".." in relative.parts:
+                fail(f"unsafe hold source path: {relative}")
+            source = self.target / relative
+            if not path_exists_no_follow(source):
+                continue
+            if kind not in {"managed-undo", "software-undo", "backup-undo"}:
+                fail(f"unsupported hold kind: {kind}")
+            destination = self.work / kind / relative
+            self.ensure_dir(destination.parent)
+            records = tree_records(source)
+            entry = {
+                "source_anchor": "target",
+                "source_relative_path": relative.as_posix(),
+                "hold_anchor": CLEANUP_DIR_NAME,
+                "hold_relative_path": destination.relative_to(cleanup_parent(self.target)).as_posix(),
+                "source_kind": kind,
+                "source_parent": object_identity_record(source.parent, self.target, "cleanup prepare source parent"),
+                "hold_parent": object_identity_record(destination.parent, cleanup_parent(self.target), "cleanup prepare hold parent"),
+                "source_tree_sha256": cleanup_tree_sha256(records),
+                "source_records": records,
+            }
+            live.append((relative, kind))
+            entries.append(entry)
+            self.prepared_holds[(relative.as_posix(), kind)] = destination
+        if not entries:
+            return []
+        if path_exists_no_follow(cleanup_prepare_intent_path(self.target)):
+            fail("cleanup prepare intent already exists")
+        intent = {
+            "schema_version": 1,
+            "product_name": PRODUCT_NAME,
+            "build_version": VERSION,
+            "canonical_target": str(self.target),
+            "cleanup_parent": CLEANUP_DIR_NAME,
+            "transaction_id": self.transaction_id,
+            "work_relative_path": self.work.relative_to(cleanup_parent(self.target)).as_posix(),
+            "target_root": self.target_root_record,
+            "entry_count": len(entries),
+            "entries": entries,
+        }
+        validate_prepare_intent(self.target, intent)
+        created = publish_no_replace_file(
+            cleanup_prepare_intent_path(self.target),
+            canonical_json(intent),
+            temp_pattern=PREPARE_TEMP_PATTERN,
+            label="cleanup-prepare-intent",
+        )
+        if not created:
+            fail("cleanup prepare intent already exists")
+        return live
+
     def move_existing_to_hold(self, relative: Path, *, kind: str) -> Optional[Path]:
         source = self.target / relative
         if not path_exists_no_follow(source):
             return None
-        destination = self.work / kind / relative
-        self.ensure_dir(destination.parent)
+        key = (relative.as_posix(), kind)
+        if key not in self.prepared_holds:
+            fail("hold source move was not durably prepared")
+        destination = self.prepared_holds[key]
         self.snapshot_parent(source)
         self.snapshot_parent(destination)
         os.replace(source, destination)
@@ -1850,6 +2618,9 @@ class UndoTransaction:
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self.work)
             fsync_parent(self.work)
+        with contextlib.suppress(FileNotFoundError):
+            cleanup_prepare_intent_path(self.target).unlink()
+            fsync_parent(cleanup_prepare_intent_path(self.target))
         with contextlib.suppress(OSError):
             cleanup_parent(self.target).rmdir()
             fsync_parent(cleanup_parent(self.target))
@@ -1863,7 +2634,24 @@ class UndoTransaction:
         with contextlib.suppress(OSError):
             self.work.rmdir()
             fsync_parent(self.work)
-        return publish_cleanup_journal(self.target, self.committed_sources)
+        pending = publish_cleanup_journal(self.target, self.committed_sources)
+        if not self.committed_sources and path_exists_no_follow(cleanup_parent(self.target)):
+            try:
+                cleanup_parent(self.target).rmdir()
+                fsync_parent(cleanup_parent(self.target))
+            except OSError:
+                raise CleanupFailure("post-commit cleanup is pending: empty cleanup parent remains")
+        return pending
+
+
+def finish_transaction(txn: UndoTransaction) -> bool:
+    try:
+        return txn.cleanup_success()
+    except CleanupFailure:
+        raise
+    except BaseException:
+        txn.rollback()
+        raise
 
 
 def inspect_target(target: Path) -> dict[str, Any]:
@@ -1908,65 +2696,54 @@ def changed_paths(target: Path, desired: dict[Path, bytes]) -> list[str]:
 
 
 def strict_remove_empty_managed_parents(target: Path, txn: UndoTransaction) -> None:
-    candidates = sorted(
-        {(target / relative).parent for relative in MANAGED_PATHS if relative != Path(STAMP_NAME)},
-        key=lambda item: len(item.parts),
-        reverse=True,
-    )
-    for directory in candidates:
-        if directory == target:
-            continue
-        if path_exists_no_follow(directory) and directory.is_dir() and not directory.is_symlink():
-            try:
-                next(directory.iterdir())
-            except StopIteration:
-                relative = relative_to_target(target, directory)
-                txn.move_existing_to_hold(relative, kind="managed-undo")
-                txn.mark_for_cleanup(relative, "managed-undo")
-            except OSError:
-                pass
+    del target, txn
 
 
 def apply_managed_state(target: Path, desired: dict[Path, bytes]) -> bool:
     txn = UndoTransaction(target, "managed")
     try:
         validate_managed_plugin_tree(target)
+        candidates: list[tuple[Path, str]] = []
         for relative in MANAGED_OBJECTS:
             validate_managed_destination(target, relative)
+            if path_exists_no_follow(target / relative):
+                candidates.append((relative, "managed-undo"))
+        for relative, _kind in txn.prepare_hold_moves(candidates):
             moved = txn.move_existing_to_hold(relative, kind="managed-undo")
             if moved is not None:
                 txn.mark_for_cleanup(relative, "managed-undo")
         for relative, content in desired.items():
             txn.write_file(relative, content)
-        post = inspect_target(target)
-        if post["state"] != "managed":
+        stamp = load_stamp(target)
+        if stamp is None:
             fail("managed postcondition failed")
+        validate_managed_files(target, stamp)
     except BaseException:
         txn.rollback()
         raise
-    try:
-        return txn.cleanup_success()
-    except CleanupFailure:
-        raise
+    return finish_transaction(txn)
 
 
 def remove_managed_state(target: Path) -> bool:
     txn = UndoTransaction(target, "managed-remove")
     try:
         validate_managed_plugin_tree(target)
+        candidates: list[tuple[Path, str]] = []
         for relative in MANAGED_OBJECTS:
             validate_managed_destination(target, relative)
+            if path_exists_no_follow(target / relative):
+                candidates.append((relative, "managed-undo"))
+        for relative, _kind in txn.prepare_hold_moves(candidates):
             moved = txn.move_existing_to_hold(relative, kind="managed-undo")
             if moved is not None:
                 txn.mark_for_cleanup(relative, "managed-undo")
         strict_remove_empty_managed_parents(target, txn)
-        state = inspect_target(target)
-        if state["state"] == "managed" or any_managed_path_exists(target):
+        if load_stamp(target) is not None or any_managed_path_exists(target):
             fail("managed removal postcondition failed")
     except BaseException:
         txn.rollback()
         raise
-    return txn.cleanup_success()
+    return finish_transaction(txn)
 
 
 def backup_pool(target: Path) -> Path:
@@ -2104,15 +2881,16 @@ def replace_backup_pool(target: Path, state: dict[str, Any]) -> bool:
         build_backup_pool(target, state, new_pool)
         old_pool = backup_pool(target)
         if path_exists_no_follow(old_pool):
-            moved = txn.move_existing_to_hold(Path(BACKUP_POOL_NAME), kind="backup-undo")
-            if moved is not None:
-                txn.mark_for_cleanup(Path(BACKUP_POOL_NAME), "backup-undo")
+            for relative, _kind in txn.prepare_hold_moves([(Path(BACKUP_POOL_NAME), "backup-undo")]):
+                moved = txn.move_existing_to_hold(relative, kind="backup-undo")
+                if moved is not None:
+                    txn.mark_for_cleanup(relative, "backup-undo")
         txn.move_new_tree_to_active(new_pool, Path(BACKUP_POOL_NAME))
         require_private_directory(backup_pool(target), "backup pool")
     except BaseException:
         txn.rollback()
         raise
-    return txn.cleanup_success()
+    return finish_transaction(txn)
 
 
 def choose_setup_and_profile(
@@ -2141,6 +2919,7 @@ def setup_lifecycle(
     workspace: Optional[str],
     operation: str,
 ) -> dict[str, Any]:
+    target_parent_record = object_identity_record(target.parent, target.parent, "target parent")
     target_created = ensure_target_directory(target)
     state = inspect_target(target)
     chosen_setup, chosen_profile = choose_setup_and_profile(
@@ -2181,6 +2960,7 @@ def setup_lifecycle(
                 else:
                     target.unlink()
                 fsync_parent(target)
+                restore_parent_metadata(target.parent, target_parent_record)
         raise
     return {
         "ok": True,
@@ -2454,6 +3234,22 @@ def software_status(target: Path) -> dict[str, Any]:
     }
 
 
+def validate_current_software_postcondition(target: Path) -> None:
+    presence = software_presence(target)
+    if presence["software_state"] != "installed":
+        fail("installed Qoder CLI failed validation: software files are incomplete")
+    validate_existing_software_surface(target)
+    info = load_json_object(software_manifest_path(target), "software manifest", owner_only=True)
+    asset_key = str(info.get("asset", ""))
+    baseline = load_baseline()
+    asset = baseline.get("manifest", {}).get("files", {}).get(asset_key)
+    if not isinstance(asset, dict):
+        fail("installed Qoder CLI failed validation: unknown asset")
+    expected = expected_software_identity(asset_key, asset, target)
+    if info != expected:
+        fail("installed Qoder CLI failed validation: manifest identity mismatch")
+
+
 def download_asset_bytes(url: str, *, expected_size: int) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": PRODUCT_NAME})
     try:
@@ -2700,6 +3496,7 @@ def apply_software_state(target: Path, live_stage: Optional[Path], *, remove: bo
     txn = UndoTransaction(target, "software")
     try:
         validate_existing_software_surface(target)
+        candidates: list[tuple[Path, str]] = []
         if remove:
             moved_parents: set[Path] = set()
             owned_children = {
@@ -2711,75 +3508,84 @@ def apply_software_state(target: Path, live_stage: Optional[Path], *, remove: bo
                 if path_exists_no_follow(parent) and parent.is_dir() and not parent.is_symlink():
                     children = {child.name for child in parent.iterdir()}
                     if children and children <= owned_children[relative]:
-                        moved = txn.move_existing_to_hold(relative, kind="software-undo")
-                        if moved is not None:
-                            txn.mark_for_cleanup(relative, "software-undo")
-                            moved_parents.add(relative)
+                        candidates.append((relative, "software-undo"))
+                        moved_parents.add(relative)
             for relative in SOFTWARE_REPLACE_PATHS:
                 if relative.parent in moved_parents:
                     continue
                 if path_exists_no_follow(target / relative):
-                    moved = txn.move_existing_to_hold(relative, kind="software-undo")
-                    if moved is not None:
-                        txn.mark_for_cleanup(relative, "software-undo")
+                    candidates.append((relative, "software-undo"))
         else:
             for relative in SOFTWARE_REPLACE_PATHS:
                 if path_exists_no_follow(target / relative):
-                    moved = txn.move_existing_to_hold(relative, kind="software-undo")
-                    if moved is not None:
-                        txn.mark_for_cleanup(relative, "software-undo")
+                    candidates.append((relative, "software-undo"))
+        for relative, kind in txn.prepare_hold_moves(candidates):
+            moved = txn.move_existing_to_hold(relative, kind=kind)
+            if moved is not None:
+                txn.mark_for_cleanup(relative, kind)
+        if not remove:
             assert live_stage is not None
             for relative in SOFTWARE_REPLACE_PATHS:
                 content, _ = read_regular_file(live_stage / relative, f"staged software {relative}", max_bytes=SOFTWARE_TREE_MAX_BYTES, allow_nlink=None)
                 txn.write_file(relative, content, executable=relative == Path("bin") / COMMAND_NAME)
-        status = software_status(target)
         if remove:
-            if status["software_state"] != "absent":
+            if software_presence(target)["software_state"] != "absent":
                 fail("removed Qoder CLI software failed postcondition")
-        elif not status["installed"] or not status["current"]:
-            detail = f": {status['validation_error']}" if "validation_error" in status else ""
-            fail(f"installed Qoder CLI failed validation{detail}")
+        else:
+            validate_current_software_postcondition(target)
     except BaseException:
         txn.rollback()
         raise
-    return txn.cleanup_success()
+    return finish_transaction(txn)
 
 
 def install_or_update_cli(target: Path, *, operation: str) -> dict[str, Any]:
-    ensure_target_directory(target)
-    preflight = software_status(target)
-    if operation == "install-cli" and preflight["software_state"] != "absent":
-        fail("Qoder CLI software already exists at target; use update-cli")
-    if operation == "update-cli":
-        if preflight["software_state"] == "absent":
-            fail("Qoder CLI is not installed at the selected target; use install-cli")
-        if preflight["installed"] and preflight["current"]:
-            return {
-                "ok": True,
-                "operation": operation,
-                "target": str(target),
-                "changed": False,
-                "version": preflight["version"],
-                "executable": preflight["executable"],
-                "cleanup_pending": preflight.get("cleanup_pending", False),
-            }
-    asset_key, asset = select_platform_asset()
-    staging = cleanup_parent(target) / f".stage-{uuid.uuid4().hex}"
-    ensure_private_directory(staging)
-    cleanup_pending = False
+    target_parent_record = object_identity_record(target.parent, target.parent, "target parent")
+    target_created = ensure_target_directory(target)
     try:
-        live_stage = build_live_stage(staging, asset_key, asset)
+        preflight = software_status(target)
+        if operation == "install-cli" and preflight["software_state"] != "absent":
+            fail("Qoder CLI software already exists at target; use update-cli")
+        if operation == "update-cli":
+            if preflight["software_state"] == "absent":
+                fail("Qoder CLI is not installed at the selected target; use install-cli")
+            if preflight["installed"] and preflight["current"]:
+                return {
+                    "ok": True,
+                    "operation": operation,
+                    "target": str(target),
+                    "changed": False,
+                    "version": preflight["version"],
+                    "executable": preflight["executable"],
+                    "cleanup_pending": preflight.get("cleanup_pending", False),
+                }
+        asset_key, asset = select_platform_asset()
+        staging = cleanup_parent(target) / f".stage-{uuid.uuid4().hex}"
+        ensure_private_directory(staging)
+        cleanup_pending = False
         try:
-            cleanup_pending = apply_software_state(target, live_stage)
-        except CleanupFailure:
-            cleanup_pending = True
-    finally:
-        if path_exists_no_follow(staging):
+            live_stage = build_live_stage(staging, asset_key, asset)
             try:
-                publish_cleanup_journal(target, [(staging, "stage-undo")])
+                cleanup_pending = apply_software_state(target, live_stage)
             except CleanupFailure:
                 cleanup_pending = True
-    status = software_status(target)
+        finally:
+            if path_exists_no_follow(staging):
+                try:
+                    publish_cleanup_journal(target, [(staging, "stage-undo")])
+                except CleanupFailure:
+                    cleanup_pending = True
+        status = software_status(target)
+    except BaseException:
+        if target_created and path_exists_no_follow(target):
+            with contextlib.suppress(OSError):
+                if target.is_dir() and not target.is_symlink():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+                fsync_parent(target)
+                restore_parent_metadata(target.parent, target_parent_record)
+        raise
     return {
         "ok": True,
         "operation": operation,
@@ -2923,18 +3729,18 @@ def launch_qoder(target: Path, args: list[str], *, workspace: Optional[str]) -> 
                 *forwarded,
             ]
             env = isolated_child_environment(canonical)
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=trusted_workspace,
-            env=env,
-            check=False,
-            timeout=None,
-            start_new_session=True,
-        )
-    except FileNotFoundError:
-        fail("target-owned qodercli executable disappeared before launch")
-    return int(completed.returncode)
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd=trusted_workspace,
+                    env=env,
+                    check=False,
+                    timeout=None,
+                    start_new_session=True,
+                )
+            except FileNotFoundError:
+                fail("target-owned qodercli executable disappeared before launch")
+            return int(completed.returncode)
 
 
 def print_payload(payload: dict[str, Any], *, json_output: bool) -> None:

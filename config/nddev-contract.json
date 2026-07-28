@@ -72,6 +72,7 @@
     "streams_child_stdio": true,
     "successful_child_output_wrapped": false,
     "environment_scope": "child-process-only",
+    "lifecycle_coordination_held_through_child": true,
     "credential_environment_allowlist": ["QODER_PERSONAL_ACCESS_TOKEN"],
     "caller_home_credentials_inherited": false
   },
@@ -124,8 +125,11 @@
   "transaction_policy": {
     "adr": "docs/adr/0003-transactional-lifecycle-contract.md@15361ed",
     "external_coordination": "monotonic product anchor and mutation-published canonical target anchors",
+    "stable_lock_root": "platform-stable same-UID protected root independent of caller TMPDIR",
     "read_only_no_create": true,
+    "prepare_authority": "durable no-replace prepare intent before the first active source move into .work-*",
     "cleanup_journal": "immutable two-phase manager-owned tombstone journal",
+    "cleanup_retirement": "durable retired marker before final journal unlink; cleanup failures remain pending",
     "cleanup_pending_result_key": "cleanup_pending",
     "mutation_drains_pending_first": true,
     "read_only_never_drains_or_recovers": true

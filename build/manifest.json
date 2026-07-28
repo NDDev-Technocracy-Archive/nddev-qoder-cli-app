@@ -71,6 +71,7 @@
     "streams_child_stdio": true,
     "successful_child_output_wrapped": false,
     "environment_scope": "child-process-only",
+    "lifecycle_coordination_held_through_child": true,
     "credential_environment_allowlist": ["QODER_PERSONAL_ACCESS_TOKEN"],
     "blocked_environment_overrides": ["QODER_* except QODER_PERSONAL_ACCESS_TOKEN", "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "TMPDIR"],
     "caller_home_credentials_inherited": false
@@ -87,7 +88,10 @@
     "managed_file_mode": "0600",
     "new_target_mode": "0700",
     "external_coordination": "monotonic product anchor plus mutation-published canonical target anchors",
+    "stable_lock_root": "platform-stable same-UID protected root independent of caller TMPDIR",
+    "prepare_authority": "durable no-replace prepare intent before the first active source move into .work-*",
     "cleanup_journal": "immutable two-phase manager-owned tombstone journal",
+    "cleanup_retirement": "durable retired marker before final journal unlink; cleanup failures remain pending",
     "preserve_unmanaged_files": true,
     "reject_symlink_managed_files": true,
     "reject_hardlink_managed_files": true,

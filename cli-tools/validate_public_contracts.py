@@ -170,9 +170,18 @@ def validate_runtime_contract(errors: list[str]) -> None:
     require(runtime.get("credential_environment_allowlist") == ["QODER_PERSONAL_ACCESS_TOKEN"], "credential allowlist mismatch", errors)
     require(runtime.get("caller_home_credentials_inherited") is False, "caller home inheritance mismatch", errors)
     require(runtime.get("requires_managed_trust_directory") is True, "trusted directory requirement mismatch", errors)
+    require(runtime.get("lifecycle_coordination_held_through_child") is True, "launch coordination lifetime mismatch", errors)
     transaction = contract.get("transaction_policy", {})
     require(transaction.get("adr") == "docs/adr/0003-transactional-lifecycle-contract.md@15361ed", "ADR pin mismatch", errors)
     require(transaction.get("read_only_no_create") is True, "read-only no-create mismatch", errors)
+    require("TMPDIR" in str(transaction.get("stable_lock_root")), "stable lock root contract mismatch", errors)
+    require(".work-*" in str(transaction.get("prepare_authority")), "prepare authority contract mismatch", errors)
+    require("retired marker" in str(transaction.get("cleanup_retirement")), "cleanup retirement contract mismatch", errors)
+    manifest_transaction = manifest.get("transaction_policy", {})
+    require(manifest_transaction.get("stable_lock_root") == transaction.get("stable_lock_root"), "manifest stable lock root mismatch", errors)
+    require(manifest_transaction.get("prepare_authority") == transaction.get("prepare_authority"), "manifest prepare authority mismatch", errors)
+    require(manifest_transaction.get("cleanup_retirement") == transaction.get("cleanup_retirement"), "manifest cleanup retirement mismatch", errors)
+    require(manifest.get("runtime_launch", {}).get("lifecycle_coordination_held_through_child") is True, "manifest launch coordination mismatch", errors)
     selection = baseline.get("product_host_selection", {})
     require(selection.get("supported_host_ids") == SUPPORTED_HOST_IDS, "supported host ids mismatch", errors)
     require(selection.get("unsupported_categories") == UNSUPPORTED_CATEGORIES, "unsupported categories mismatch", errors)
@@ -192,6 +201,18 @@ def validate_manager_surface(errors: list[str]) -> None:
         require(manager.DEFAULT_PROFILE_ID == "full-auto", "manager default profile mismatch", errors)
         require(manager.ALLOWED_CREDENTIAL_ENV == ("QODER_PERSONAL_ACCESS_TOKEN",), "manager credential allowlist mismatch", errors)
         require("QODER_MEMORY" not in manager.ALLOWED_CREDENTIAL_ENV, "manager must not allow QODER_MEMORY", errors)
+        require(manager.CLEANUP_PREPARE_INTENT_NAME == "NDDEV-QODER-CLI-PREPARE-INTENT.json", "prepare intent name mismatch", errors)
+        require(manager.CLEANUP_RETIRED_NAME == "NDDEV-QODER-CLI-CLEANUP-RETIRED.json", "retired marker name mismatch", errors)
+        with tempfile.TemporaryDirectory(prefix="nddev-qoder-public-tmpdir-") as tmp:
+            old_tmpdir = os.environ.get("TMPDIR")
+            os.environ["TMPDIR"] = tmp
+            try:
+                require(manager.fixed_temp_root() != Path(tmp).resolve(), "manager lock root follows caller TMPDIR", errors)
+            finally:
+                if old_tmpdir is None:
+                    os.environ.pop("TMPDIR", None)
+                else:
+                    os.environ["TMPDIR"] = old_tmpdir
         manager.parse_args(["list", "--json"])
         manager.parse_args(["update", "--target", "/tmp/example", "--json"])
         manager.parse_args(["remove-cli", "--target", "/tmp/example", "--json"])
