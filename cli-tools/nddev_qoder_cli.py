@@ -1875,6 +1875,29 @@ def validate_cleanup_source_relative(relative: str) -> Path:
     return path
 
 
+def cleanup_source_relative_to_parent(parent: Path, source: Path) -> Path:
+    try:
+        info = source.lstat()
+    except FileNotFoundError:
+        fail("cleanup source disappeared during binding")
+    if stat.S_ISLNK(info.st_mode):
+        fail("cleanup source must not be a symlink")
+    try:
+        return validate_cleanup_source_relative(source.relative_to(parent).as_posix())
+    except ValueError:
+        pass
+    try:
+        resolved_parent = parent.resolve(strict=True)
+        resolved_source = source.resolve(strict=True)
+    except OSError as exc:
+        fail(f"cleanup source cannot be resolved under its canonical parent: {exc}")
+    try:
+        return validate_cleanup_source_relative(resolved_source.relative_to(resolved_parent).as_posix())
+    except ValueError:
+        fail("cleanup source is outside the fixed cleanup parent")
+    raise AssertionError("unreachable")
+
+
 def validate_prepare_source_relative(relative: str) -> Path:
     path = validate_bounded_relative(relative, "prepare source")
     if path.parts[0] == CLEANUP_DIR_NAME:
@@ -2588,15 +2611,12 @@ def drain_cleanup_before_mutation(target: Path) -> bool:
 
 def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bool:
     parent = cleanup_parent(target)
-    live_sources: list[tuple[Path, str]] = []
+    live_sources: list[tuple[Path, str, Path]] = []
     for source, kind in sources:
         if not path_exists_no_follow(source):
             continue
-        try:
-            source.relative_to(parent)
-        except ValueError:
-            fail("cleanup source is outside the fixed cleanup parent")
-        live_sources.append((source, kind))
+        source_relative = cleanup_source_relative_to_parent(parent, source)
+        live_sources.append((parent / source_relative, kind, source_relative))
     if not live_sources:
         return False
     parent_creation = PrivateDirectoryCreation()
@@ -2607,11 +2627,9 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
     tombstone_parent = parent / "tombstones" / transaction_id
     parent_creation.ensure(tombstone_parent.parent, "cleanup tombstone parent")
     intent_entries: list[dict[str, Any]] = []
-    for index, (source, kind) in enumerate(live_sources):
+    for index, (source, kind, source_relative) in enumerate(live_sources):
         if kind not in {"managed-undo", "software-undo", "backup-undo", "stage-undo"}:
             fail(f"unsupported cleanup source kind: {kind}")
-        source_relative = source.relative_to(parent)
-        validate_cleanup_source_relative(source_relative.as_posix())
         destination = tombstone_parent / f"{index}-{kind}"
         ensure_private_parent(destination, f"cleanup tombstone {destination}")
         records = tree_records(source)
@@ -2655,7 +2673,7 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
         fail("cleanup intent already exists")
     moved: list[tuple[Path, Path]] = []
     try:
-        for entry, (source, _kind) in zip(intent_entries, live_sources):
+        for entry, (source, _kind, _source_relative) in zip(intent_entries, live_sources):
             destination = parent / validate_cleanup_relative(entry["destination_relative_path"])
             os.replace(source, destination)
             moved.append((source, destination))
