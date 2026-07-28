@@ -467,7 +467,10 @@ class PrivateDirectoryCreation:
             except OSError as exc:
                 fail(f"created private directory is not empty during rollback: {directory}: {exc}")
             fsync_parent(directory)
+        created_set = set(self.created)
         for parent, snapshot in self.parent_snapshots.items():
+            if parent in created_set and not path_exists_no_follow(parent):
+                continue
             restore_directory_snapshot(parent, snapshot, f"{parent} rollback parent")
 
 
