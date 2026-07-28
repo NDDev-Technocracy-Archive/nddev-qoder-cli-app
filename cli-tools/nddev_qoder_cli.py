@@ -2663,16 +2663,16 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
     intent_content = canonical_json(intent)
     if len(intent_content) > MAX_CLEANUP_JOURNAL_BYTES:
         fail("cleanup intent exceeds the serialized metadata bound")
-    created = publish_no_replace_file(
-        cleanup_intent_path(target),
-        intent_content,
-        temp_pattern=CLEANUP_INTENT_TEMP_PATTERN,
-        label="cleanup-intent",
-    )
-    if not created:
-        fail("cleanup intent already exists")
     moved: list[tuple[Path, Path]] = []
     try:
+        created = publish_no_replace_file(
+            cleanup_intent_path(target),
+            intent_content,
+            temp_pattern=CLEANUP_INTENT_TEMP_PATTERN,
+            label="cleanup-intent",
+        )
+        if not created:
+            fail("cleanup intent already exists")
         for entry, (source, _kind, _source_relative) in zip(intent_entries, live_sources):
             destination = parent / validate_cleanup_relative(entry["destination_relative_path"])
             os.replace(source, destination)
