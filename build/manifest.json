@@ -119,7 +119,7 @@
     "stage_version_probe": true,
     "target_owned": true,
     "bounds": {
-      "max_download_bytes": 268435456,
+      "max_download_bytes": 50589197,
       "max_tree_bytes": 536870912,
       "max_tree_paths": 5000
     },

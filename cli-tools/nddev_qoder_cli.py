@@ -68,7 +68,7 @@ METADATA_MAX_BYTES = 256 * 1024
 MANAGED_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
 PROCESS_TIMEOUT_SECONDS = 120
 PROCESS_OUTPUT_MAX_BYTES = 256 * 1024
-SOFTWARE_DOWNLOAD_MAX_BYTES = 256 * 1024 * 1024
+SOFTWARE_DOWNLOAD_MAX_BYTES = 50_589_197
 SOFTWARE_TREE_MAX_BYTES = 512 * 1024 * 1024
 SOFTWARE_TREE_MAX_PATHS = 5000
 APPLEDOUBLE_METADATA_MAX_BYTES = 16 * 1024
@@ -3552,6 +3552,8 @@ def validate_current_software_postcondition(target: Path) -> None:
 
 
 def download_asset_bytes(url: str, *, expected_size: int) -> bytes:
+    if expected_size <= 0 or expected_size > SOFTWARE_DOWNLOAD_MAX_BYTES:
+        fail(f"Qoder CLI expected asset size is outside the pinned product bound: {expected_size}")
     request = urllib.request.Request(url, headers={"User-Agent": PRODUCT_NAME})
     try:
         response_context = urllib.request.urlopen(request, timeout=PROCESS_TIMEOUT_SECONDS)
@@ -3571,12 +3573,15 @@ def download_asset_bytes(url: str, *, expected_size: int) -> bytes:
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = response.read(1024 * 1024)
+            read_size = min(1024 * 1024, expected_size + 1 - total)
+            if read_size <= 0:
+                fail(f"Qoder CLI download exceeded the exact {expected_size}-byte asset bound")
+            chunk = response.read(read_size)
             if not chunk:
                 break
             total += len(chunk)
-            if total > SOFTWARE_DOWNLOAD_MAX_BYTES:
-                fail(f"Qoder CLI download exceeded the {SOFTWARE_DOWNLOAD_MAX_BYTES}-byte bound")
+            if total > expected_size:
+                fail(f"Qoder CLI download exceeded the exact {expected_size}-byte asset bound")
             chunks.append(chunk)
     if total != expected_size:
         fail(f"Qoder CLI download size mismatch: expected {expected_size}, got {total}")

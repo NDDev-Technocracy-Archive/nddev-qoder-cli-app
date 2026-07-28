@@ -28,6 +28,7 @@ EXPECTED = {
     "manifest_size": 2717,
     "install_sha256": "1e850fa3375bdccd179215f91638f4065d912c5dbddbd346d0ba352bad8ca9be",
     "install_size": 10651,
+    "max_supported_product_asset_size": 50589197,
 }
 SETUP_IDS = ["nddev-builder"]
 PROFILE_IDS = ["full-auto", "safe"]
@@ -188,6 +189,9 @@ def validate_runtime_contract(errors: list[str]) -> None:
     require(selection.get("ubuntu_version_floor") is None, "ubuntu version floor must be null", errors)
     require(selection.get("ubuntu_floor_source") == "no-official-floor", "ubuntu floor source mismatch", errors)
     software = manifest.get("software_install", {})
+    contract_software = contract.get("software_install", {})
+    require(software.get("bounds", {}).get("max_download_bytes") == EXPECTED["max_supported_product_asset_size"], "manifest download bound mismatch", errors)
+    require(contract_software.get("bounds", {}).get("max_download_bytes") == EXPECTED["max_supported_product_asset_size"], "contract download bound mismatch", errors)
     require(software.get("supported_product_hosts") == SUPPORTED_HOST_IDS, "software host ids mismatch", errors)
     require(software.get("unsupported_categories") == UNSUPPORTED_CATEGORIES, "software unsupported categories mismatch", errors)
     require(software.get("ubuntu_version_floor") is None, "software ubuntu floor must be null", errors)
@@ -200,6 +204,7 @@ def validate_manager_surface(errors: list[str]) -> None:
         require(manager.DEFAULT_SETUP_ID == "nddev-builder", "manager default setup mismatch", errors)
         require(manager.DEFAULT_PROFILE_ID == "full-auto", "manager default profile mismatch", errors)
         require(manager.ALLOWED_CREDENTIAL_ENV == ("QODER_PERSONAL_ACCESS_TOKEN",), "manager credential allowlist mismatch", errors)
+        require(manager.SOFTWARE_DOWNLOAD_MAX_BYTES == EXPECTED["max_supported_product_asset_size"], "manager download bound mismatch", errors)
         require("QODER_MEMORY" not in manager.ALLOWED_CREDENTIAL_ENV, "manager must not allow QODER_MEMORY", errors)
         require(manager.CLEANUP_PREPARE_INTENT_NAME == "NDDEV-QODER-CLI-PREPARE-INTENT.json", "prepare intent name mismatch", errors)
         require(manager.CLEANUP_RETIRED_NAME == "NDDEV-QODER-CLI-CLEANUP-RETIRED.json", "retired marker name mismatch", errors)
