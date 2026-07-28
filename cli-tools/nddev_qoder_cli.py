@@ -700,8 +700,8 @@ def publish_no_replace_file(
         try:
             fsync_parent(final_path)
             fault(f"{label}:binding-parent-fsync")
-            temporary.unlink()
             fault(f"{label}:binding-alias-unlink")
+            temporary.unlink()
             fsync_parent(final_path)
             fault(f"{label}:binding-alias-parent-fsync")
         except BaseException:
