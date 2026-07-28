@@ -77,7 +77,7 @@ MAX_CLEANUP_TREE_BYTES = 768 * 1024 * 1024
 
 SETUP_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 PROFILE_ID_PATTERN = SETUP_ID_PATTERN
-ANCHOR_TEMP_PATTERN = re.compile(r"\.nddev-qoder-cli-[a-z0-9-]+\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
+ANCHOR_TEMP_PATTERN = re.compile(r"\.[A-Za-z0-9._-]+\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
 JOURNAL_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-CLEANUP\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
 
 SUPPORTED_PRODUCT_HOST_IDS = (
@@ -471,9 +471,16 @@ def ensure_private_directory(path: Path) -> None:
     if path_exists_no_follow(path):
         require_private_directory(path, str(path))
         return
-    path.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True)
-    os.chmod(path, OWNER_DIRECTORY_MODE)
-    fsync_parent(path)
+    missing: list[Path] = []
+    current = path
+    while not path_exists_no_follow(current):
+        missing.append(current)
+        current = current.parent
+    require_private_directory(current, f"{path} existing ancestor")
+    for directory in reversed(missing):
+        directory.mkdir(mode=OWNER_DIRECTORY_MODE)
+        os.chmod(directory, OWNER_DIRECTORY_MODE)
+        fsync_parent(directory)
 
 
 def ensure_private_parent(path: Path, label: str) -> None:
@@ -562,8 +569,8 @@ def publish_no_replace_file(
             fsync_parent(final_path)
             return False
         try:
-            temporary.unlink()
             fault(f"{label}:binding-alias-unlink")
+            temporary.unlink()
             fsync_parent(final_path)
             fault(f"{label}:binding-parent-fsync")
         except BaseException:
@@ -1595,11 +1602,15 @@ def drain_cleanup_before_mutation(target: Path) -> bool:
     with contextlib.suppress(FileNotFoundError):
         cleanup_intent_path(target).unlink()
         fsync_parent(cleanup_intent_path(target))
-    tombstones = cleanup_parent(target) / "tombstones"
-    if path_exists_no_follow(tombstones):
-        with contextlib.suppress(OSError):
-            tombstones.rmdir()
-            fsync_parent(tombstones)
+    if path_exists_no_follow(cleanup_parent(target)):
+        for directory in sorted(
+            [path for path in cleanup_parent(target).rglob("*") if path.is_dir() and not path.is_symlink()],
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+                fsync_parent(directory)
     with contextlib.suppress(OSError):
         cleanup_parent(target).rmdir()
         fsync_parent(cleanup_parent(target))
@@ -1648,12 +1659,12 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
             destination = tombstone_parent / f"{index}-{kind}"
             ensure_private_parent(destination, f"cleanup tombstone {destination}")
             os.replace(source, destination)
+            moved.append((source, destination))
             fault("cleanup-source-move")
             fsync_parent(source)
             fault("cleanup-source-parent-fsync")
             fsync_parent(destination)
             fault("cleanup-destination-parent-fsync")
-            moved.append((source, destination))
             records = tree_records(destination)
             entries.append(
                 {
@@ -1689,7 +1700,9 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
             temp_pattern=JOURNAL_TEMP_PATTERN,
             label="cleanup-journal",
         )
-    except BaseException:
+    except BaseException as exc:
+        if path_exists_no_follow(cleanup_journal_path(target)):
+            raise CleanupFailure(f"post-commit cleanup is pending: {exc}") from exc
         for source, destination in reversed(moved):
             with contextlib.suppress(FileNotFoundError):
                 os.replace(destination, source)
@@ -2687,24 +2700,34 @@ def apply_software_state(target: Path, live_stage: Optional[Path], *, remove: bo
     txn = UndoTransaction(target, "software")
     try:
         validate_existing_software_surface(target)
-        for relative in SOFTWARE_REPLACE_PATHS:
-            if path_exists_no_follow(target / relative):
-                moved = txn.move_existing_to_hold(relative, kind="software-undo")
-                if moved is not None:
-                    txn.mark_for_cleanup(relative, "software-undo")
         if remove:
-            for relative in sorted(SOFTWARE_PARENT_PATHS, key=lambda item: len(item.parts), reverse=True):
+            moved_parents: set[Path] = set()
+            owned_children = {
+                Path("bin"): {COMMAND_NAME},
+                Path("software"): {SOFTWARE_MANIFEST_NAME},
+            }
+            for relative in SOFTWARE_PARENT_PATHS:
                 parent = target / relative
                 if path_exists_no_follow(parent) and parent.is_dir() and not parent.is_symlink():
-                    try:
-                        next(parent.iterdir())
-                    except StopIteration:
+                    children = {child.name for child in parent.iterdir()}
+                    if children and children <= owned_children[relative]:
                         moved = txn.move_existing_to_hold(relative, kind="software-undo")
                         if moved is not None:
                             txn.mark_for_cleanup(relative, "software-undo")
-                    except OSError:
-                        pass
+                            moved_parents.add(relative)
+            for relative in SOFTWARE_REPLACE_PATHS:
+                if relative.parent in moved_parents:
+                    continue
+                if path_exists_no_follow(target / relative):
+                    moved = txn.move_existing_to_hold(relative, kind="software-undo")
+                    if moved is not None:
+                        txn.mark_for_cleanup(relative, "software-undo")
         else:
+            for relative in SOFTWARE_REPLACE_PATHS:
+                if path_exists_no_follow(target / relative):
+                    moved = txn.move_existing_to_hold(relative, kind="software-undo")
+                    if moved is not None:
+                        txn.mark_for_cleanup(relative, "software-undo")
             assert live_stage is not None
             for relative in SOFTWARE_REPLACE_PATHS:
                 content, _ = read_regular_file(live_stage / relative, f"staged software {relative}", max_bytes=SOFTWARE_TREE_MAX_BYTES, allow_nlink=None)
@@ -2876,10 +2899,11 @@ def launch_qoder(target: Path, args: list[str], *, workspace: Optional[str]) -> 
     with product_lifecycle_lock(shared=False, create=True):
         canonical = resolve_target_under_coordination(lexical, mutation=True)
         with target_lifecycle_lock(canonical, shared=False, create=True):
-            drain_cleanup_before_mutation(canonical)
             state = inspect_target(canonical)
             if state["state"] != "managed":
                 fail("target is not managed by nddev-qoder-cli-app")
+            if state.get("cleanup_pending"):
+                fail("pending post-commit cleanup must be drained before launch")
             status = software_status(canonical)
             if status.get("cleanup_pending"):
                 fail("pending post-commit cleanup must be drained before launch")
