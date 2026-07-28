@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "full-auto",
+  "description": "Trusted full-auto launch profile using Qoder CLI bypass_permissions.",
+  "permission_mode": "bypass_permissions",
+  "launch_args": ["--permission-mode", "bypass_permissions"],
+  "default": true
+}

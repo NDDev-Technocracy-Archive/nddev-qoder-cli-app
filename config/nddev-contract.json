@@ -10,17 +10,26 @@
     "stamp_schema": 1,
     "managed_file_mode": "0600",
     "managed_files": ["settings.json", "AGENTS.md"],
-    "managed_tree_roots": ["plugins/nddev-builder", "skills/nddev-builder", "agents", "hooks"],
+    "managed_tree_roots": ["plugins/nddev-builder"],
     "preserve_other_state": true
   },
   "setup_system": {
     "catalog_root": "setups",
+    "profile_root": "profiles",
     "identity_source": "setups/<setup-id>/setup.json",
-    "setup_ids": ["safe", "balanced", "full-auto"],
-    "selection_option": "--setup <safe|balanced|full-auto>",
+    "profile_source": "profiles/<profile-id>/profile.json",
+    "setup_ids": ["nddev-builder"],
+    "profile_ids": ["full-auto", "safe"],
+    "default_setup_id": "nddev-builder",
+    "default_profile_id": "full-auto",
+    "selection_option": "--setup nddev-builder",
+    "profile_option": "--profile <full-auto|safe>",
     "list_command": "python3 cli-tools/nddev_qoder_cli.py list [--json]",
     "status_command": "python3 cli-tools/nddev_qoder_cli.py status --target <absolute-target> [--json]",
-    "launch_command": "python3 cli-tools/nddev_qoder_cli.py launch --target <absolute-target> -- [args...]",
+    "plan_command": "python3 cli-tools/nddev_qoder_cli.py plan --target <absolute-target> [--setup nddev-builder] [--profile <profile>] [--workspace <absolute-workspace>] [--json]",
+    "install_command": "python3 cli-tools/nddev_qoder_cli.py install --target <absolute-target> [--setup nddev-builder] [--profile <profile>] [--workspace <absolute-workspace>] [--json]",
+    "update_command": "python3 cli-tools/nddev_qoder_cli.py update --target <absolute-target> [--setup nddev-builder] [--profile <profile>] [--workspace <absolute-workspace>] [--json]",
+    "launch_command": "python3 cli-tools/nddev_qoder_cli.py launch --target <absolute-target> [--workspace <absolute-workspace>] -- [args...]",
     "builder_default_on": true
   },
   "safety": {
@@ -34,12 +43,13 @@
     "max_backups": 10,
     "new_target_mode": "0700",
     "preserve_existing_target_mode": true,
-    "rollback_on_failure": true
+    "rollback_on_failure": true,
+    "supported_host_preflight_before_target_observation": true
   },
   "runtime_compatibility": {
     "baseline_ref": "references/qoder-cli-baseline.json",
     "version_ref": "build/version.json",
-    "tested_version": "1.1.5",
+    "tested_version": "1.1.7",
     "npm_package": "@qoder-ai/qodercli",
     "manifest_url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
     "documentation": [
@@ -50,28 +60,32 @@
   },
   "runtime_launch": {
     "command": "<absolute-target>/bin/qodercli",
-    "direct_command": "QODER_HOME=<absolute-target> <absolute-target>/bin/qodercli [setup launch args] --settings <absolute-target>/settings.json [args...]",
-    "home_environment_variable": "QODER_HOME",
+    "direct_command": "HOME=<absolute-target>/home USERPROFILE=<absolute-target>/home TMPDIR=<absolute-target>/runtime/tmp XDG_CONFIG_HOME=<absolute-target>/runtime/xdg-config XDG_CACHE_HOME=<absolute-target>/runtime/xdg-cache XDG_STATE_HOME=<absolute-target>/runtime/xdg-state QODER_CONFIG_DIR=<absolute-target> <absolute-target>/bin/qodercli --config-dir <absolute-target> --cwd <trusted-workspace> --plugin-dir <absolute-target>/plugins/nddev-builder --permission-mode bypass_permissions [args...]",
+    "config_directory_environment_variable": "QODER_CONFIG_DIR",
     "executable_source": "validated-target-owned-qoder-release-asset",
     "forwards_arguments": true,
     "forwards_child_exit_code": true,
     "json_manager_errors_supported": true,
-    "manager_command": "python3 cli-tools/nddev_qoder_cli.py launch --target <absolute-target> -- [args...]",
+    "manager_command": "python3 cli-tools/nddev_qoder_cli.py launch --target <absolute-target> [--workspace <absolute-workspace>] -- [args...]",
     "requires_clean_managed_target": true,
+    "requires_managed_trust_directory": true,
     "streams_child_stdio": true,
     "successful_child_output_wrapped": false,
     "environment_scope": "child-process-only",
-    "token_environment_inheritance": "stripped"
+    "credential_environment_allowlist": ["QODER_PERSONAL_ACCESS_TOKEN"],
+    "caller_home_credentials_inherited": false
   },
   "software_install": {
-    "tested_version": "1.1.5",
-    "supported_platforms": ["macos", "linux", "windows"],
+    "tested_version": "1.1.7",
+    "supported_product_hosts": ["macos-arm64", "macos-x64", "ubuntu-glibc-arm64", "ubuntu-glibc-x64"],
+    "unsupported_categories": ["windows", "non-ubuntu-linux", "linux-musl", "unsupported-architecture"],
+    "ubuntu_version_floor": null,
     "source": "official Qoder CLI manifest and release assets",
     "installer_evidence": {
       "url": "https://qoder.com/install",
-      "sha256": "f26997301e5cf1ecff7378ffa25714ef0caf743a53f23530fdc61d4f08caaec2",
-      "size": 10652,
-      "direct_asset_reason": "The installer verifies the manifest asset then delegates final placement and PATH mutation to qodercli install; this manager uses the verified release asset directly for target-owned installation."
+      "sha256": "1e850fa3375bdccd179215f91638f4065d912c5dbddbd346d0ba352bad8ca9be",
+      "size": 10651,
+      "direct_asset_reason": "The installer has no target prefix contract; this manager uses the verified release asset directly to keep installation target-owned."
     },
     "layout": {
       "visible_command": "bin/qodercli",
@@ -88,16 +102,17 @@
     "commands": {
       "status": "python3 cli-tools/nddev_qoder_cli.py software-status --target <absolute-target> [--json]",
       "install": "python3 cli-tools/nddev_qoder_cli.py install-cli --target <absolute-target> [--json]",
-      "update": "python3 cli-tools/nddev_qoder_cli.py update-cli --target <absolute-target> [--json]"
+      "update": "python3 cli-tools/nddev_qoder_cli.py update-cli --target <absolute-target> [--json]",
+      "remove": "python3 cli-tools/nddev_qoder_cli.py remove-cli --target <absolute-target> [--json]"
     }
   },
   "builder_capability": {
-    "projection": "qoder-native-plugin-user-files",
+    "projection": "qoder-native-local-plugin",
     "source_root": "plugins/nddev-builder",
     "manifest": "plugins/nddev-builder/.qoder-plugin/plugin.json",
     "version_ref": "build/version.json:nddev_builder_plugin_version",
     "native_paths": [".qoder-plugin/plugin.json", "skills", "agents", "hooks"],
-    "user_projection_paths": ["skills/nddev-builder", "agents/nddev-builder.md", "hooks/nddev-builder.json"],
+    "user_projection_paths": [],
     "skills": ["nddev-builder"],
     "agents": ["nddev-builder"],
     "hooks": ["nddev-builder"],
@@ -105,5 +120,14 @@
     "extensions": [],
     "default_on": true,
     "marketplace": null
+  },
+  "transaction_policy": {
+    "adr": "docs/adr/0003-transactional-lifecycle-contract.md@15361ed",
+    "external_coordination": "monotonic product anchor and mutation-published canonical target anchors",
+    "read_only_no_create": true,
+    "cleanup_journal": "immutable two-phase manager-owned tombstone journal",
+    "cleanup_pending_result_key": "cleanup_pending",
+    "mutation_drains_pending_first": true,
+    "read_only_never_drains_or_recovers": true
   }
 }

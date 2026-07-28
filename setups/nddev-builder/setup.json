@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "nddev-builder",
+  "description": "NDDev Builder content setup for Qoder CLI native plugin, skill, agent, hook, and instruction projection.",
+  "managed_files": ["settings.json", "AGENTS.md"],
+  "builder_projection": "native-plugin",
+  "builder_default_on": true
+}
