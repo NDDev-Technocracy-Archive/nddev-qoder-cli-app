@@ -76,6 +76,8 @@ MAX_BACKUP_SLOTS = 10
 MAX_CLEANUP_ENTRIES = 24
 MAX_CLEANUP_TREE_PATHS = 8000
 MAX_CLEANUP_TREE_BYTES = 768 * 1024 * 1024
+MAX_CLEANUP_JOURNAL_BYTES = METADATA_MAX_BYTES
+MAX_PUBLICATION_ALIAS_SCAN = 4096
 
 SETUP_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 PROFILE_ID_PATTERN = SETUP_ID_PATTERN
@@ -235,6 +237,18 @@ class CleanupFailure(QoderCliSetupError):
     """A post-commit cleanup failure; the active state already committed."""
 
 
+class CleanupJournalPublishedInvalid(QoderCliSetupError):
+    """A final cleanup journal is visible but cannot prove valid pending state."""
+
+
+class FinalPathPublishedFault(QoderCliSetupError):
+    """A no-replace publication fault after the final pathname is visible."""
+
+    def __init__(self, message: str, *, final_path: Path) -> None:
+        super().__init__(message)
+        self.final_path = final_path
+
+
 def fail(message: str) -> None:
     raise QoderCliSetupError(message)
 
@@ -361,6 +375,100 @@ def fsync_directory(path: Path) -> None:
 
 def fsync_parent(path: Path) -> None:
     fsync_directory(path.parent)
+
+
+def write_all(fd: int, content: bytes, label: str) -> None:
+    offset = 0
+    while offset < len(content):
+        written = os.write(fd, content[offset:])
+        if written <= 0:
+            fail(f"{label} write made no progress")
+        offset += written
+
+
+def directory_snapshot(path: Path, label: str) -> dict[str, Any]:
+    info = require_directory(path, label)
+    return {
+        "dev": info.st_dev,
+        "ino": info.st_ino,
+        "uid": owner_of(info),
+        "mode": mode_of(info),
+        "nlink": info.st_nlink,
+        "size": info.st_size,
+        "mtime_ns": info.st_mtime_ns,
+        "children": sorted(child.name for child in path.iterdir()),
+    }
+
+
+def restore_directory_snapshot(path: Path, snapshot: dict[str, Any], label: str) -> None:
+    info = require_directory(path, label)
+    if identity_of(info) != (snapshot["dev"], snapshot["ino"]):
+        fail(f"{label} identity changed during rollback")
+    if owner_of(info) != snapshot["uid"]:
+        fail(f"{label} owner changed during rollback")
+    children = sorted(child.name for child in path.iterdir())
+    if children != snapshot["children"]:
+        fail(f"{label} child set changed during rollback")
+    os.chmod(path, int(snapshot["mode"]))
+    os.utime(path, ns=(int(snapshot["mtime_ns"]), int(snapshot["mtime_ns"])))
+    fsync_directory(path)
+
+
+class PrivateDirectoryCreation:
+    """Rollback only directories created by this operation before publication."""
+
+    def __init__(self, *, stable_root: Optional[Path] = None) -> None:
+        self.stable_root = stable_root
+        self.created: list[Path] = []
+        self.parent_snapshots: dict[Path, dict[str, Any]] = {}
+
+    def _snapshot_parent(self, path: Path) -> None:
+        parent = path.parent
+        if parent not in self.parent_snapshots and path_exists_no_follow(parent):
+            self.parent_snapshots[parent] = directory_snapshot(parent, f"{path} parent")
+
+    def ensure(self, path: Path, label: str) -> None:
+        if path_exists_no_follow(path):
+            require_private_directory(path, label)
+            return
+        missing: list[Path] = []
+        current = path
+        while not path_exists_no_follow(current):
+            missing.append(current)
+            if current.parent == current:
+                fail(f"{label} path escaped the filesystem root")
+            current = current.parent
+        if self.stable_root is not None:
+            try:
+                current.relative_to(self.stable_root)
+            except ValueError:
+                if current != self.stable_root:
+                    fail(f"{label} path escaped the stable root")
+        if current == self.stable_root:
+            require_directory(current, "stable lifecycle lock root")
+        else:
+            require_private_directory(current, f"{label} existing ancestor")
+        for directory in reversed(missing):
+            self._snapshot_parent(directory)
+            directory.mkdir(mode=OWNER_DIRECTORY_MODE)
+            os.chmod(directory, OWNER_DIRECTORY_MODE)
+            fsync_parent(directory)
+            self.created.append(directory)
+
+    def rollback(self) -> None:
+        for directory in reversed(self.created):
+            if not path_exists_no_follow(directory):
+                continue
+            info = directory.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                fail(f"created private directory changed before rollback: {directory}")
+            try:
+                directory.rmdir()
+            except OSError as exc:
+                fail(f"created private directory is not empty during rollback: {directory}: {exc}")
+            fsync_parent(directory)
+        for parent, snapshot in self.parent_snapshots.items():
+            restore_directory_snapshot(parent, snapshot, f"{parent} rollback parent")
 
 
 def read_regular_file(
@@ -513,7 +621,7 @@ def write_durable_file(path: Path, content: bytes, *, mode: int = OWNER_FILE_MOD
         fd, tmp_raw = tempfile.mkstemp(prefix=f".{path.name}.tmp.", dir=str(path.parent))
         temporary = Path(tmp_raw)
         try:
-            os.write(fd, content)
+            write_all(fd, content, f"file {path}")
             fault("write-file-write")
             os.fchmod(fd, mode)
             fault("write-file-fchmod")
@@ -541,6 +649,7 @@ def publish_no_replace_file(
     *,
     temp_pattern: re.Pattern[str],
     label: str,
+    stable_parent_root: Optional[Path] = None,
 ) -> bool:
     """Publish complete content with a hard-link no-replace final-path commit.
 
@@ -549,17 +658,24 @@ def publish_no_replace_file(
     final_path visible, the final file is monotonic and is never unlinked here.
     """
 
-    ensure_private_parent(final_path, label)
+    if len(content) > METADATA_MAX_BYTES:
+        fail(f"{label} exceeds the {METADATA_MAX_BYTES}-byte metadata size limit")
+    parent_creation = PrivateDirectoryCreation(stable_root=stable_parent_root)
+    parent_creation.ensure(final_path.parent, f"{label} parent")
     token = f"{os.getpid()}-{uuid.uuid4().hex}"
     temporary = final_path.parent / f".{final_path.name}.pubtmp.{token}"
-    fd = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
-        OWNER_FILE_MODE,
-    )
+    if not temp_pattern.fullmatch(temporary.name):
+        fail(f"{label} temporary publication name is outside the declared grammar")
+    fd = -1
     linked = False
     try:
-        os.write(fd, content)
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+            OWNER_FILE_MODE,
+        )
+        fault(f"{label}:binding-temp-create")
+        write_all(fd, content, label)
         fault(f"{label}:binding-write")
         os.fchmod(fd, OWNER_FILE_MODE)
         fault(f"{label}:binding-fchmod")
@@ -567,32 +683,47 @@ def publish_no_replace_file(
         fault(f"{label}:binding-file-fsync")
         os.close(fd)
         fd = -1
+        fault(f"{label}:binding-close")
         try:
             os.link(temporary, final_path)
             linked = True
             fault(f"{label}:binding-no-replace")
         except FileExistsError:
-            temporary.unlink()
-            fsync_parent(final_path)
+            try:
+                temporary.unlink()
+            finally:
+                try:
+                    fsync_parent(final_path)
+                finally:
+                    parent_creation.rollback()
             return False
         try:
-            fault(f"{label}:binding-alias-unlink")
-            temporary.unlink()
             fsync_parent(final_path)
             fault(f"{label}:binding-parent-fsync")
+            temporary.unlink()
+            fault(f"{label}:binding-alias-unlink")
+            fsync_parent(final_path)
+            fault(f"{label}:binding-alias-parent-fsync")
         except BaseException:
             # Final-path visibility is the commit point. Keep final_path and
             # leave only the unpublished alias for mutation-only recovery.
-            raise
+            raise FinalPathPublishedFault(
+                f"{label} publication reached final path but cleanup/durability failed",
+                final_path=final_path,
+            )
         return True
     except BaseException:
         if fd >= 0:
             os.close(fd)
         if not linked:
-            with contextlib.suppress(FileNotFoundError):
-                temporary.unlink()
-            with contextlib.suppress(Exception):
-                fsync_parent(final_path)
+            try:
+                with contextlib.suppress(FileNotFoundError):
+                    temporary.unlink()
+            finally:
+                try:
+                    fsync_parent(final_path)
+                finally:
+                    parent_creation.rollback()
         raise
 
 
@@ -614,7 +745,11 @@ def recover_hardlink_publication_alias(
     if final_info.st_nlink != 2:
         fail(f"{label} has unsupported hard-link count {final_info.st_nlink}")
     matches: list[Path] = []
+    scanned = 0
     for entry in final_path.parent.iterdir():
+        scanned += 1
+        if scanned > MAX_PUBLICATION_ALIAS_SCAN:
+            fail(f"{label} parent has too many entries for bounded alias recovery")
         if entry == final_path or not temp_pattern.fullmatch(entry.name):
             continue
         try:
@@ -654,6 +789,26 @@ def load_strict_json_file(path: Path, label: str, *, read_only: bool) -> dict[st
     return parse_json_object(content, label)
 
 
+def read_regular_fd(fd: int, label: str, *, max_bytes: int = METADATA_MAX_BYTES) -> tuple[bytes, os.stat_result]:
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        fail(f"{label} must be a regular file")
+    if info.st_size > max_bytes:
+        fail(f"{label} exceeds the {max_bytes}-byte size limit")
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            fail(f"{label} exceeds the {max_bytes}-byte size limit")
+        chunks.append(chunk)
+    return b"".join(chunks), os.fstat(fd)
+
+
 def fixed_temp_root() -> Path:
     """Return the platform rendezvous root, independent of caller TMPDIR."""
 
@@ -690,23 +845,8 @@ def ensure_lock_directory(path: Path) -> None:
     if path_exists_no_follow(path):
         require_private_directory(path, str(path))
         return
-    missing: list[Path] = []
-    current = path
-    while not path_exists_no_follow(current):
-        missing.append(current)
-        if current.parent == current:
-            fail("lifecycle lock path escaped the stable root")
-        current = current.parent
-    if current != root and not current.is_relative_to(root):
-        fail("lifecycle lock path escaped the stable root")
-    if current == root:
-        require_directory(root, "stable lifecycle lock root")
-    else:
-        require_private_directory(current, f"{path} existing ancestor")
-    for directory in reversed(missing):
-        directory.mkdir(mode=OWNER_DIRECTORY_MODE)
-        os.chmod(directory, OWNER_DIRECTORY_MODE)
-        fsync_parent(directory)
+    creation = PrivateDirectoryCreation(stable_root=root)
+    creation.ensure(path, f"lifecycle lock directory {path}")
 
 
 def product_anchor_path() -> Path:
@@ -749,18 +889,52 @@ def anchor_binding(kind: str, path: Path, canonical_target: Optional[Path] = Non
     return binding
 
 
+def expected_anchor_value(path: Path, kind: str, canonical_target: Optional[Path]) -> dict[str, Any]:
+    return anchor_binding(kind, path, canonical_target)
+
+
+def validate_anchor_fd(
+    fd: int,
+    path: Path,
+    kind: str,
+    canonical_target: Optional[Path],
+    *,
+    allow_alias: bool,
+) -> os.stat_result:
+    label = f"{kind} lifecycle anchor"
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or not is_owner_only_file(info):
+        fail(f"{label} must be an owner-only regular file")
+    if info.st_nlink != 1 and not (allow_alias and info.st_nlink == 2):
+        fail(f"{label} publication is incomplete")
+    final_info = require_regular_file(
+        path,
+        label,
+        owner_only=True,
+        max_bytes=METADATA_MAX_BYTES,
+        allow_nlink=None,
+    )
+    if identity_of(final_info) != identity_of(info):
+        fail_concurrent(f"{label} changed while it was opened")
+    content, after = read_regular_fd(fd, label, max_bytes=METADATA_MAX_BYTES)
+    if identity_of(after) != identity_of(info):
+        fail_concurrent(f"{label} changed while it was read")
+    value = parse_json_object(content, label)
+    expected = expected_anchor_value(path, kind, canonical_target)
+    if value != expected:
+        fail(f"{label} binding is malformed or mismatched")
+    return after
+
+
 def validate_anchor_binding(path: Path, kind: str, canonical_target: Optional[Path], *, read_only: bool) -> None:
     label = f"{kind} lifecycle anchor"
-    if not read_only:
-        recover_hardlink_publication_alias(path, temp_pattern=ANCHOR_TEMP_PATTERN, label=label)
     value = load_strict_json_file(path, label, read_only=read_only)
-    expected = anchor_binding(kind, path, canonical_target)
+    expected = expected_anchor_value(path, kind, canonical_target)
     if value != expected:
         fail(f"{label} binding is malformed or mismatched")
 
 
 def open_anchor_fd(path: Path, kind: str, canonical_target: Optional[Path], *, read_only: bool) -> int:
-    validate_anchor_binding(path, kind, canonical_target, read_only=read_only)
     flags = os.O_RDWR if not read_only else os.O_RDONLY
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
@@ -768,9 +942,17 @@ def open_anchor_fd(path: Path, kind: str, canonical_target: Optional[Path], *, r
         flags |= os.O_NOFOLLOW
     fd = os.open(path, flags)
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or not is_owner_only_file(info) or info.st_nlink != 1:
-            fail(f"{kind} lifecycle anchor changed while opening")
+        validate_anchor_fd(fd, path, kind, canonical_target, allow_alias=not read_only)
+        flock_fd(fd, shared=read_only)
+        fault(f"{kind}-anchor-lock-acquired")
+        validate_anchor_fd(fd, path, kind, canonical_target, allow_alias=not read_only)
+        if not read_only:
+            recover_hardlink_publication_alias(
+                path,
+                temp_pattern=ANCHOR_TEMP_PATTERN,
+                label=f"{kind} lifecycle anchor",
+            )
+            validate_anchor_fd(fd, path, kind, canonical_target, allow_alias=False)
     except BaseException:
         os.close(fd)
         raise
@@ -791,17 +973,15 @@ def product_lifecycle_lock(*, shared: bool, create: bool) -> Iterator[Optional[i
         yield None
         return
     if create:
-        ensure_lock_directory(path.parent)
         publish_no_replace_file(
             path,
             canonical_json(anchor_binding("product", path, None)),
             temp_pattern=ANCHOR_TEMP_PATTERN,
             label="product-anchor",
+            stable_parent_root=fixed_temp_root(),
         )
     fd = open_anchor_fd(path, "product", None, read_only=shared)
     try:
-        flock_fd(fd, shared=shared)
-        fault("product-anchor-lock-acquired")
         yield fd
     finally:
         if fcntl is not None:
@@ -822,17 +1002,15 @@ def target_lifecycle_lock(
         yield None
         return
     if create:
-        ensure_lock_directory(path.parent)
         publish_no_replace_file(
             path,
             canonical_json(anchor_binding("target", path, canonical_target)),
             temp_pattern=ANCHOR_TEMP_PATTERN,
             label="target-anchor",
+            stable_parent_root=fixed_temp_root(),
         )
     fd = open_anchor_fd(path, "target", canonical_target, read_only=shared)
     try:
-        flock_fd(fd, shared=shared)
-        fault("target-anchor-lock-acquired")
         yield fd
     finally:
         if fcntl is not None:
@@ -995,6 +1173,9 @@ def coordinate_target(
     product_path = product_anchor_path()
     if not path_exists_no_follow(product_path):
         canonical = resolve_target_under_coordination(lexical, mutation=False)
+        target_path = target_anchor_path(canonical)
+        if path_exists_no_follow(target_path):
+            fail("canonical target lifecycle anchor exists without product anchor")
         result = action(canonical)
         if path_exists_no_follow(product_path):
             with product_lifecycle_lock(shared=True, create=False):
@@ -1004,6 +1185,8 @@ def coordinate_target(
                     with target_lifecycle_lock(canonical, shared=True, create=False):
                         return action(canonical)
                 return action(canonical)
+        if path_exists_no_follow(target_path):
+            fail_concurrent("canonical target lifecycle anchor appeared without product anchor")
         return result
     with product_lifecycle_lock(shared=True, create=False):
         canonical = resolve_target_under_coordination(lexical, mutation=False)
@@ -1019,12 +1202,46 @@ def ensure_target_directory(target: Path) -> bool:
         require_private_directory(target, "target")
         return False
     parent = target.parent
+    parent_snapshot = directory_snapshot(parent, "target parent")
     parent_info = require_private_directory(parent, "target parent")
+    if target.name in parent_snapshot["children"]:
+        fail_concurrent("target appeared during setup")
     del parent_info
-    target.mkdir(mode=OWNER_DIRECTORY_MODE)
-    os.chmod(target, OWNER_DIRECTORY_MODE)
-    fsync_parent(target)
+    try:
+        target.mkdir(mode=OWNER_DIRECTORY_MODE)
+        fault("target-directory-create")
+        os.chmod(target, OWNER_DIRECTORY_MODE)
+        fault("target-directory-chmod")
+        fsync_parent(target)
+        fault("target-directory-parent-fsync")
+    except BaseException:
+        if path_exists_no_follow(target):
+            info = target.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                fail("created target changed into a symlink during rollback")
+            if stat.S_ISDIR(info.st_mode):
+                if any(target.iterdir()):
+                    fail("created target is not empty during rollback")
+                target.rmdir()
+            else:
+                fail("created target changed into an unsafe object during rollback")
+            fsync_parent(target)
+        restore_directory_snapshot(parent, parent_snapshot, "target parent")
+        raise
     return True
+
+
+def remove_created_target(target: Path, parent_snapshot: dict[str, Any]) -> None:
+    if path_exists_no_follow(target):
+        info = target.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            fail("created target changed into a symlink during rollback")
+        if stat.S_ISDIR(info.st_mode):
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        fsync_parent(target)
+    restore_directory_snapshot(target.parent, parent_snapshot, "target parent")
 
 
 def load_baseline() -> dict[str, Any]:
@@ -1988,7 +2205,38 @@ def load_cleanup_journal(target: Path, *, read_only: bool) -> Optional[dict[str,
     return journal
 
 
-def validate_cleanup_journal(target: Path, journal: dict[str, Any]) -> None:
+def validate_visible_cleanup_journal_after_publication(target: Path) -> None:
+    journal_path = cleanup_journal_path(target)
+    content, _info = read_regular_file(
+        journal_path,
+        "cleanup journal",
+        owner_only=True,
+        max_bytes=MAX_CLEANUP_JOURNAL_BYTES,
+        allow_nlink=None,
+    )
+    journal = parse_json_object(content, "cleanup journal")
+    validate_cleanup_journal(target, journal, allow_publication_aliases=True)
+
+
+def validate_visible_cleanup_intent_after_publication(target: Path) -> None:
+    intent_path = cleanup_intent_path(target)
+    content, _info = read_regular_file(
+        intent_path,
+        "cleanup promotion intent",
+        owner_only=True,
+        max_bytes=MAX_CLEANUP_JOURNAL_BYTES,
+        allow_nlink=None,
+    )
+    intent = parse_json_object(content, "cleanup promotion intent")
+    validate_cleanup_intent(target, intent)
+
+
+def validate_cleanup_journal(
+    target: Path,
+    journal: dict[str, Any],
+    *,
+    allow_publication_aliases: bool = False,
+) -> None:
     required = {
         "schema_version",
         "product_name",
@@ -2035,6 +2283,8 @@ def validate_cleanup_journal(target: Path, journal: dict[str, Any]) -> None:
     if path_exists_no_follow(cleanup_parent(target)):
         allowed_relatives = cleanup_journal_allowed_relatives(journal)
         for child in cleanup_parent(target).iterdir():
+            if JOURNAL_TEMP_PATTERN.fullmatch(child.name) and allow_publication_aliases:
+                continue
             if child.name.startswith(".NDDEV-QODER-CLI-CLEANUP.json.pubtmp."):
                 fail("cleanup journal publication alias requires mutation recovery")
             if child.name.startswith(".NDDEV-QODER-CLI-CLEANUP-INTENT.json.pubtmp."):
@@ -2043,6 +2293,8 @@ def validate_cleanup_journal(target: Path, journal: dict[str, Any]) -> None:
                 fail("cleanup retired publication alias requires mutation recovery")
         for path in cleanup_parent(target).rglob("*"):
             relative = path.relative_to(cleanup_parent(target)).as_posix()
+            if JOURNAL_TEMP_PATTERN.fullmatch(path.name) and allow_publication_aliases:
+                continue
             if relative not in allowed_relatives:
                 fail(f"cleanup directory contains unknown state: {relative}")
 
@@ -2335,16 +2587,25 @@ def drain_cleanup_before_mutation(target: Path) -> bool:
 
 
 def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bool:
-    live_sources = [(source.resolve(strict=True), kind) for source, kind in sources if path_exists_no_follow(source)]
+    parent = cleanup_parent(target)
+    live_sources: list[tuple[Path, str]] = []
+    for source, kind in sources:
+        if not path_exists_no_follow(source):
+            continue
+        try:
+            source.relative_to(parent)
+        except ValueError:
+            fail("cleanup source is outside the fixed cleanup parent")
+        live_sources.append((source, kind))
     if not live_sources:
         return False
-    parent = cleanup_parent(target)
-    ensure_private_directory(parent)
+    parent_creation = PrivateDirectoryCreation()
+    parent_creation.ensure(parent, "cleanup parent")
     if path_exists_no_follow(cleanup_journal_path(target)) or path_exists_no_follow(cleanup_intent_path(target)):
         fail("cleanup journal already exists")
     transaction_id = uuid.uuid4().hex
     tombstone_parent = parent / "tombstones" / transaction_id
-    ensure_private_directory(tombstone_parent.parent)
+    parent_creation.ensure(tombstone_parent.parent, "cleanup tombstone parent")
     intent_entries: list[dict[str, Any]] = []
     for index, (source, kind) in enumerate(live_sources):
         if kind not in {"managed-undo", "software-undo", "backup-undo", "stage-undo"}:
@@ -2381,9 +2642,12 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
         "entries": intent_entries,
     }
     validate_cleanup_intent(target, intent)
+    intent_content = canonical_json(intent)
+    if len(intent_content) > MAX_CLEANUP_JOURNAL_BYTES:
+        fail("cleanup intent exceeds the serialized metadata bound")
     created = publish_no_replace_file(
         cleanup_intent_path(target),
-        canonical_json(intent),
+        intent_content,
         temp_pattern=CLEANUP_INTENT_TEMP_PATTERN,
         label="cleanup-intent",
     )
@@ -2404,22 +2668,37 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
             remove_empty_cleanup_ancestors(source.parent, parent)
         journal = journal_from_cleanup_intent(target, intent)
         validate_cleanup_journal(target, journal)
+        journal_content = canonical_json(journal)
+        if len(journal_content) > MAX_CLEANUP_JOURNAL_BYTES:
+            fail("cleanup journal exceeds the serialized metadata bound")
         publish_no_replace_file(
             cleanup_journal_path(target),
-            canonical_json(journal),
+            journal_content,
             temp_pattern=JOURNAL_TEMP_PATTERN,
             label="cleanup-journal",
         )
     except BaseException as exc:
         if path_exists_no_follow(cleanup_journal_path(target)):
+            try:
+                validate_visible_cleanup_journal_after_publication(target)
+            except BaseException as validation_exc:
+                raise CleanupJournalPublishedInvalid(
+                    f"visible cleanup journal is invalid after publication: {validation_exc}"
+                ) from validation_exc
+            raise CleanupFailure(f"post-commit cleanup is pending: {exc}") from exc
+        if path_exists_no_follow(cleanup_intent_path(target)):
+            try:
+                validate_visible_cleanup_intent_after_publication(target)
+            except BaseException as validation_exc:
+                raise CleanupJournalPublishedInvalid(
+                    f"visible cleanup intent is invalid after publication: {validation_exc}"
+                ) from validation_exc
             raise CleanupFailure(f"post-commit cleanup is pending: {exc}") from exc
         for source, destination in reversed(moved):
             with contextlib.suppress(FileNotFoundError):
                 os.replace(destination, source)
                 fsync_parent(source)
-        with contextlib.suppress(FileNotFoundError):
-            cleanup_intent_path(target).unlink()
-            fsync_parent(cleanup_intent_path(target))
+        parent_creation.rollback()
         raise
     try:
         drain_cleanup_before_mutation(target)
@@ -2433,7 +2712,7 @@ class UndoTransaction:
         self.target = target
         self.label = label
         self.transaction_id = uuid.uuid4().hex
-        self.parent_records: dict[Path, tuple[int, int]] = {}
+        self.parent_records: dict[Path, dict[str, Any]] = {}
         self.created_dirs: list[Path] = []
         self.created_files: list[Path] = []
         self.moved_to_hold: list[tuple[Path, Path]] = []
@@ -2451,10 +2730,10 @@ class UndoTransaction:
         if parent in self.parent_records:
             return
         try:
-            info = parent.lstat()
+            snapshot = directory_snapshot(parent, f"{path} parent")
         except FileNotFoundError:
             return
-        self.parent_records[parent] = (mode_of(info), info.st_mtime_ns)
+        self.parent_records[parent] = snapshot
 
     def ensure_dir(self, path: Path) -> None:
         if path_exists_no_follow(path):
@@ -2559,7 +2838,7 @@ class UndoTransaction:
             mode,
         )
         try:
-            os.write(fd, content)
+            write_all(fd, content, f"{self.label} file {relative}")
             fault(f"{self.label}-write")
             os.fchmod(fd, mode)
             fault(f"{self.label}-fchmod")
@@ -2609,12 +2888,9 @@ class UndoTransaction:
                 with contextlib.suppress(OSError):
                     directory.rmdir()
                     fsync_parent(directory)
-        for parent, (mode, mtime_ns) in self.parent_records.items():
+        for parent, snapshot in self.parent_records.items():
             if path_exists_no_follow(parent):
-                with contextlib.suppress(OSError):
-                    os.chmod(parent, mode)
-                with contextlib.suppress(OSError):
-                    os.utime(parent, ns=(mtime_ns, mtime_ns))
+                restore_directory_snapshot(parent, snapshot, f"{parent} rollback parent")
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self.work)
             fsync_parent(self.work)
@@ -2630,12 +2906,13 @@ class UndoTransaction:
         if path_exists_no_follow(source):
             self.committed_sources.append((source, kind))
 
-    def cleanup_success(self) -> bool:
+    def cleanup_success(self, extra_sources: Optional[list[tuple[Path, str]]] = None) -> bool:
         with contextlib.suppress(OSError):
             self.work.rmdir()
             fsync_parent(self.work)
-        pending = publish_cleanup_journal(self.target, self.committed_sources)
-        if not self.committed_sources and path_exists_no_follow(cleanup_parent(self.target)):
+        sources = [*self.committed_sources, *(extra_sources or [])]
+        pending = publish_cleanup_journal(self.target, sources)
+        if not sources and path_exists_no_follow(cleanup_parent(self.target)):
             try:
                 cleanup_parent(self.target).rmdir()
                 fsync_parent(cleanup_parent(self.target))
@@ -2644,10 +2921,10 @@ class UndoTransaction:
         return pending
 
 
-def finish_transaction(txn: UndoTransaction) -> bool:
+def finish_transaction(txn: UndoTransaction, extra_sources: Optional[list[tuple[Path, str]]] = None) -> bool:
     try:
-        return txn.cleanup_success()
-    except CleanupFailure:
+        return txn.cleanup_success(extra_sources)
+    except (CleanupFailure, CleanupJournalPublishedInvalid):
         raise
     except BaseException:
         txn.rollback()
@@ -2699,19 +2976,33 @@ def strict_remove_empty_managed_parents(target: Path, txn: UndoTransaction) -> N
     del target, txn
 
 
-def apply_managed_state(target: Path, desired: dict[Path, bytes]) -> bool:
+def apply_managed_state(
+    target: Path,
+    desired: dict[Path, bytes],
+    *,
+    backup_state: Optional[dict[str, Any]] = None,
+) -> bool:
     txn = UndoTransaction(target, "managed")
     try:
         validate_managed_plugin_tree(target)
         candidates: list[tuple[Path, str]] = []
+        new_backup_pool: Optional[Path] = None
+        if backup_state is not None:
+            new_backup_pool = txn.work / "backup-new"
+            build_backup_pool(target, backup_state, new_backup_pool)
+            if path_exists_no_follow(backup_pool(target)):
+                candidates.append((Path(BACKUP_POOL_NAME), "backup-undo"))
         for relative in MANAGED_OBJECTS:
             validate_managed_destination(target, relative)
             if path_exists_no_follow(target / relative):
                 candidates.append((relative, "managed-undo"))
-        for relative, _kind in txn.prepare_hold_moves(candidates):
-            moved = txn.move_existing_to_hold(relative, kind="managed-undo")
+        for relative, kind in txn.prepare_hold_moves(candidates):
+            moved = txn.move_existing_to_hold(relative, kind=kind)
             if moved is not None:
-                txn.mark_for_cleanup(relative, "managed-undo")
+                txn.mark_for_cleanup(relative, kind)
+        if new_backup_pool is not None:
+            txn.move_new_tree_to_active(new_backup_pool, Path(BACKUP_POOL_NAME))
+            require_private_directory(backup_pool(target), "backup pool")
         for relative, content in desired.items():
             txn.write_file(relative, content)
         stamp = load_stamp(target)
@@ -2724,19 +3015,28 @@ def apply_managed_state(target: Path, desired: dict[Path, bytes]) -> bool:
     return finish_transaction(txn)
 
 
-def remove_managed_state(target: Path) -> bool:
+def remove_managed_state(target: Path, *, backup_state: Optional[dict[str, Any]] = None) -> bool:
     txn = UndoTransaction(target, "managed-remove")
     try:
         validate_managed_plugin_tree(target)
         candidates: list[tuple[Path, str]] = []
+        new_backup_pool: Optional[Path] = None
+        if backup_state is not None:
+            new_backup_pool = txn.work / "backup-new"
+            build_backup_pool(target, backup_state, new_backup_pool)
+            if path_exists_no_follow(backup_pool(target)):
+                candidates.append((Path(BACKUP_POOL_NAME), "backup-undo"))
         for relative in MANAGED_OBJECTS:
             validate_managed_destination(target, relative)
             if path_exists_no_follow(target / relative):
                 candidates.append((relative, "managed-undo"))
-        for relative, _kind in txn.prepare_hold_moves(candidates):
-            moved = txn.move_existing_to_hold(relative, kind="managed-undo")
+        for relative, kind in txn.prepare_hold_moves(candidates):
+            moved = txn.move_existing_to_hold(relative, kind=kind)
             if moved is not None:
-                txn.mark_for_cleanup(relative, "managed-undo")
+                txn.mark_for_cleanup(relative, kind)
+        if new_backup_pool is not None:
+            txn.move_new_tree_to_active(new_backup_pool, Path(BACKUP_POOL_NAME))
+            require_private_directory(backup_pool(target), "backup pool")
         strict_remove_empty_managed_parents(target, txn)
         if load_stamp(target) is not None or any_managed_path_exists(target):
             fail("managed removal postcondition failed")
@@ -2919,7 +3219,7 @@ def setup_lifecycle(
     workspace: Optional[str],
     operation: str,
 ) -> dict[str, Any]:
-    target_parent_record = object_identity_record(target.parent, target.parent, "target parent")
+    target_parent_snapshot = directory_snapshot(target.parent, "target parent")
     target_created = ensure_target_directory(target)
     state = inspect_target(target)
     chosen_setup, chosen_profile = choose_setup_and_profile(
@@ -2942,25 +3242,27 @@ def setup_lifecycle(
     changed = changed_paths(target, desired)
     backup_slot: Optional[int] = None
     cleanup_pending = False
+    active_committed = False
     try:
-        if state["state"] == "managed" and changed:
-            replace_backup_pool(target, state)
-            backup_slot = 0
         if changed:
             try:
-                cleanup_pending = apply_managed_state(target, desired)
+                cleanup_pending = apply_managed_state(
+                    target,
+                    desired,
+                    backup_state=state if state["state"] == "managed" else None,
+                )
             except CleanupFailure:
                 cleanup_pending = True
+            except CleanupJournalPublishedInvalid:
+                active_committed = True
+                raise
+            active_committed = True
+            if state["state"] == "managed":
+                backup_slot = 0
         post = inspect_target(target)
     except BaseException:
-        if target_created and path_exists_no_follow(target):
-            with contextlib.suppress(OSError):
-                if target.is_dir() and not target.is_symlink():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
-                fsync_parent(target)
-                restore_parent_metadata(target.parent, target_parent_record)
+        if target_created and not active_committed and path_exists_no_follow(target):
+            remove_created_target(target, target_parent_snapshot)
         raise
     return {
         "ok": True,
@@ -3054,10 +3356,9 @@ def remove_setup(target: Path) -> dict[str, Any]:
     state = inspect_target(target)
     if state["state"] != "managed":
         fail("target is not managed by nddev-qoder-cli-app")
-    replace_backup_pool(target, state)
     cleanup_pending = False
     try:
-        cleanup_pending = remove_managed_state(target)
+        cleanup_pending = remove_managed_state(target, backup_state=state)
     except CleanupFailure:
         cleanup_pending = True
     post = inspect_target(target)
@@ -3492,7 +3793,13 @@ def build_live_stage(staging: Path, asset_key: str, asset: dict[str, Any]) -> Pa
     return live
 
 
-def apply_software_state(target: Path, live_stage: Optional[Path], *, remove: bool = False) -> bool:
+def apply_software_state(
+    target: Path,
+    live_stage: Optional[Path],
+    *,
+    remove: bool = False,
+    extra_cleanup_sources: Optional[list[tuple[Path, str]]] = None,
+) -> bool:
     txn = UndoTransaction(target, "software")
     try:
         validate_existing_software_surface(target)
@@ -3536,12 +3843,14 @@ def apply_software_state(target: Path, live_stage: Optional[Path], *, remove: bo
     except BaseException:
         txn.rollback()
         raise
-    return finish_transaction(txn)
+    return finish_transaction(txn, extra_cleanup_sources)
 
 
 def install_or_update_cli(target: Path, *, operation: str) -> dict[str, Any]:
-    target_parent_record = object_identity_record(target.parent, target.parent, "target parent")
+    target_parent_snapshot = directory_snapshot(target.parent, "target parent")
     target_created = ensure_target_directory(target)
+    active_committed = False
+    staging: Optional[Path] = None
     try:
         preflight = software_status(target)
         if operation == "install-cli" and preflight["software_state"] != "absent":
@@ -3563,28 +3872,36 @@ def install_or_update_cli(target: Path, *, operation: str) -> dict[str, Any]:
         staging = cleanup_parent(target) / f".stage-{uuid.uuid4().hex}"
         ensure_private_directory(staging)
         cleanup_pending = False
+        live_stage = build_live_stage(staging, asset_key, asset)
         try:
-            live_stage = build_live_stage(staging, asset_key, asset)
-            try:
-                cleanup_pending = apply_software_state(target, live_stage)
-            except CleanupFailure:
-                cleanup_pending = True
-        finally:
-            if path_exists_no_follow(staging):
-                try:
-                    publish_cleanup_journal(target, [(staging, "stage-undo")])
-                except CleanupFailure:
-                    cleanup_pending = True
+            cleanup_pending = apply_software_state(
+                target,
+                live_stage,
+                extra_cleanup_sources=[(staging, "stage-undo")],
+            )
+        except CleanupFailure:
+            cleanup_pending = True
+        except CleanupJournalPublishedInvalid:
+            active_committed = True
+            raise
+        active_committed = True
         status = software_status(target)
     except BaseException:
-        if target_created and path_exists_no_follow(target):
-            with contextlib.suppress(OSError):
-                if target.is_dir() and not target.is_symlink():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
-                fsync_parent(target)
-                restore_parent_metadata(target.parent, target_parent_record)
+        if target_created and not active_committed and path_exists_no_follow(target):
+            remove_created_target(target, target_parent_snapshot)
+        elif not active_committed and staging is not None and path_exists_no_follow(staging):
+            authority_paths = (
+                cleanup_prepare_intent_path(target),
+                cleanup_intent_path(target),
+                cleanup_journal_path(target),
+                cleanup_retired_path(target),
+            )
+            if any(path_exists_no_follow(path) for path in authority_paths):
+                fail("uncommitted software stage cannot be removed while cleanup authority exists")
+            delete_bounded_uncommitted_tree(staging)
+            if path_exists_no_follow(cleanup_parent(target)) and not any(cleanup_parent(target).iterdir()):
+                cleanup_parent(target).rmdir()
+                fsync_parent(cleanup_parent(target))
         raise
     return {
         "ok": True,
