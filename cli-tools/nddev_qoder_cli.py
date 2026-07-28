@@ -2631,7 +2631,7 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
         if kind not in {"managed-undo", "software-undo", "backup-undo", "stage-undo"}:
             fail(f"unsupported cleanup source kind: {kind}")
         destination = tombstone_parent / f"{index}-{kind}"
-        ensure_private_parent(destination, f"cleanup tombstone {destination}")
+        parent_creation.ensure(destination.parent, f"cleanup tombstone parent {destination.parent}")
         records = tree_records(source)
         intent_entries.append(
             {
