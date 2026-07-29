@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "build_version": "0.1.0",
-  "python_requires": ">=3.10",
-  "qoder_cli_tested": "1.1.5",
-  "qoder_cli_published_at": "2026-07-24T11:00:12.692Z",
+  "build_version": "0.2.0",
+  "python_requires": ">=3.9",
+  "qoder_cli_tested": "1.1.7",
+  "qoder_cli_published_at": "2026-07-28T10:58:43.023Z",
   "command": "qodercli",
   "npm_package": "@qoder-ai/qodercli",
   "nddev_builder_plugin_version": "0.1.0",

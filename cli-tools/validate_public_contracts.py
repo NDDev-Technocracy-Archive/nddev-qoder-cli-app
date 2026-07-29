@@ -1,34 +1,48 @@
 #!/usr/bin/env python3
-"""Validate nddev-qoder-cli-app public contracts without side effects."""
+"""Validate nddev-qoder-cli-app public contracts without persistent side effects."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any
+
+sys.dont_write_bytecode = True
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:[-+].*)?\Z")
 EXPECTED = {
-    "version": "1.1.5",
-    "published_at": "2026-07-24T11:00:12.692Z",
+    "build_version": "0.2.0",
+    "qoder_version": "1.1.7",
+    "published_at": "2026-07-28T10:58:43.023Z",
     "command": "qodercli",
     "npm_package": "@qoder-ai/qodercli",
+    "manifest_sha256": "f5aaf3ddcb5bba307173db5a51a72298c20f9cf2d32ba4e8f10b6e80b9cb6594",
+    "manifest_size": 2717,
+    "install_sha256": "1e850fa3375bdccd179215f91638f4065d912c5dbddbd346d0ba352bad8ca9be",
+    "install_size": 10651,
+    "max_supported_product_asset_size": 50589197,
 }
-SETUP_IDS = ["safe", "balanced", "full-auto"]
-LAUNCH_ARGS = {
-    "safe": ["--permission-mode", "default"],
-    "balanced": [
-        "--permission-mode",
-        "accept_edits",
-        "--allowed-tools",
-        "Read,Grep,Glob,Edit,Write,Bash(git status),Bash(git diff:*),Bash(git log:*)",
-        "--disallowed-tools",
-        "Bash(rm -rf:*),Bash(sudo:*),Bash(git push:*)",
-    ],
-    "full-auto": ["--permission-mode", "bypass_permissions"],
-}
+SETUP_IDS = ["nddev-builder"]
+PROFILE_IDS = ["full-auto", "safe"]
+SUPPORTED_HOST_IDS = ["macos-arm64", "macos-x64", "ubuntu-glibc-arm64", "ubuntu-glibc-x64"]
+UNSUPPORTED_CATEGORIES = ["windows", "non-ubuntu-linux", "linux-musl", "unsupported-architecture"]
+MANAGED_FILES = [
+    "settings.json",
+    "AGENTS.md",
+    "plugins/nddev-builder/.qoder-plugin/plugin.json",
+    "plugins/nddev-builder/skills/nddev-builder/SKILL.md",
+    "plugins/nddev-builder/agents/nddev-builder.md",
+    "plugins/nddev-builder/hooks/hooks.json",
+    "NDDEV-QODER-CLI-SETUP.json",
+]
 PLACEHOLDER_MARKER = "skele" + "ton"
 
 
@@ -44,6 +58,22 @@ def require(condition: bool, message: str, errors: list[str]) -> None:
         errors.append(message)
 
 
+def load_manager() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "nddev_qoder_cli_public_contract_manager",
+        ROOT / "cli-tools" / "nddev_qoder_cli.py",
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("cannot import public manager")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
 def validate_versions(errors: list[str]) -> None:
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     build = read_json("build/version.json")
@@ -51,256 +81,223 @@ def validate_versions(errors: list[str]) -> None:
     contract = read_json("config/nddev-contract.json")
     baseline = read_json("references/qoder-cli-baseline.json")
     require(SEMVER.fullmatch(version) is not None, "VERSION is not SemVer", errors)
-    require(version != "0.0.0", "VERSION must not be placeholder 0.0.0", errors)
+    require(version == EXPECTED["build_version"], "VERSION mismatch", errors)
     require(build.get("schema_version") == 2, "build schema mismatch", errors)
     require(manifest.get("schema_version") == 2, "manifest schema mismatch", errors)
     require(contract.get("contract_version") == 2, "contract version mismatch", errors)
     require(build.get("build_version") == version, "build version mismatch", errors)
     require(manifest.get("build_version") == version, "manifest version mismatch", errors)
-    require(PLACEHOLDER_MARKER not in contract, "contract contains placeholder marker", errors)
-    require(build.get("qoder_cli_tested") == EXPECTED["version"], "tested version mismatch", errors)
-    require(
-        build.get("qoder_cli_published_at") == EXPECTED["published_at"],
-        "published_at mismatch",
-        errors,
-    )
+    require(build.get("python_requires") == ">=3.9", "python_requires mismatch", errors)
+    require(PLACEHOLDER_MARKER not in json.dumps(contract), "contract contains placeholder marker", errors)
+    require(build.get("qoder_cli_tested") == EXPECTED["qoder_version"], "tested version mismatch", errors)
+    require(build.get("qoder_cli_published_at") == EXPECTED["published_at"], "published_at mismatch", errors)
     require(build.get("command") == EXPECTED["command"], "command mismatch", errors)
-    require(build.get("npm_package") == EXPECTED["npm_package"], "package mismatch", errors)
-    manifest_baseline = baseline.get("manifest")
-    npm = baseline.get("npm")
-    require(isinstance(manifest_baseline, dict), "baseline manifest missing", errors)
-    require(isinstance(npm, dict), "baseline npm missing", errors)
-    if isinstance(manifest_baseline, dict):
-        require(
-            manifest_baseline.get("latest") == build.get("qoder_cli_tested"),
-            "baseline latest mismatch",
-            errors,
-        )
-        require(
-            manifest_baseline.get("published_at") == build.get("qoder_cli_published_at"),
-            "baseline published_at mismatch",
-            errors,
-        )
-    if isinstance(npm, dict):
-        require(npm.get("package") == build.get("npm_package"), "baseline package mismatch", errors)
-        require(
-            npm.get("version") == build.get("qoder_cli_tested"),
-            "baseline package version mismatch",
-            errors,
-        )
-        require(npm.get("binary") == build.get("command"), "baseline command mismatch", errors)
-    for owner, runtime in (
-        ("manifest", manifest.get("runtime_compatibility")),
-        ("contract", contract.get("runtime_compatibility")),
-    ):
+    require(build.get("npm_package") == EXPECTED["npm_package"], "npm package mismatch", errors)
+    manifest_baseline = baseline.get("manifest", {})
+    require(manifest_baseline.get("latest") == EXPECTED["qoder_version"], "baseline latest mismatch", errors)
+    require(manifest_baseline.get("published_at") == EXPECTED["published_at"], "baseline published_at mismatch", errors)
+    require(manifest_baseline.get("sha256") == EXPECTED["manifest_sha256"], "manifest digest mismatch", errors)
+    require(manifest_baseline.get("size") == EXPECTED["manifest_size"], "manifest size mismatch", errors)
+    installer = baseline.get("install_script", {})
+    require(installer.get("sha256") == EXPECTED["install_sha256"], "installer digest mismatch", errors)
+    require(installer.get("size") == EXPECTED["install_size"], "installer size mismatch", errors)
+    for owner, runtime in (("manifest", manifest.get("runtime_compatibility")), ("contract", contract.get("runtime_compatibility"))):
         require(isinstance(runtime, dict), f"{owner} runtime_compatibility missing", errors)
         if isinstance(runtime, dict):
-            require(
-                runtime.get("tested_version") == build.get("qoder_cli_tested"),
-                f"{owner} tested version mismatch",
-                errors,
-            )
-            require(
-                runtime.get("npm_package") == build.get("npm_package"),
-                f"{owner} package mismatch",
-                errors,
-            )
-            require(
-                runtime.get("baseline_ref") == build.get("runtime_baseline_ref"),
-                f"{owner} baseline ref mismatch",
-                errors,
-            )
-    for owner, software in (
-        ("manifest", manifest.get("software_install")),
-        ("contract", contract.get("software_install")),
-    ):
-        require(isinstance(software, dict), f"{owner} software_install missing", errors)
-        if isinstance(software, dict):
-            installer = software.get("installer_evidence", {})
-            bounds = software.get("bounds", {})
-            require(
-                installer.get("sha256")
-                == "f26997301e5cf1ecff7378ffa25714ef0caf743a53f23530fdc61d4f08caaec2",
-                f"{owner} installer evidence digest mismatch",
-                errors,
-            )
-            require(installer.get("size") == 10652, f"{owner} installer size mismatch", errors)
-            require(
-                software.get("status_executes_binary") is False,
-                f"{owner} software-status must not execute binary",
-                errors,
-            )
-            require(
-                software.get("stage_version_probe") is True,
-                f"{owner} stage version probe missing",
-                errors,
-            )
-            require(software.get("target_owned") is True, f"{owner} target ownership missing", errors)
-            require(
-                bounds == {
-                    "max_download_bytes": 268435456,
-                    "max_tree_bytes": 536870912,
-                    "max_tree_paths": 5000,
-                },
-                f"{owner} software bounds mismatch",
-                errors,
-            )
+            require(runtime.get("tested_version") == EXPECTED["qoder_version"], f"{owner} tested version mismatch", errors)
+            require(runtime.get("npm_package") == EXPECTED["npm_package"], f"{owner} npm package mismatch", errors)
+            require(runtime.get("baseline_ref") == build.get("runtime_baseline_ref"), f"{owner} baseline ref mismatch", errors)
 
 
 def validate_assets(errors: list[str]) -> None:
     baseline = read_json("references/qoder-cli-baseline.json")
-    installer = baseline.get("install_script", {})
-    require(
-        installer.get("sha256") == "f26997301e5cf1ecff7378ffa25714ef0caf743a53f23530fdc61d4f08caaec2",
-        "installer digest mismatch",
-        errors,
-    )
-    require(installer.get("size") == 10652, "installer size mismatch", errors)
     files = baseline.get("manifest", {}).get("files")
     require(isinstance(files, dict), "baseline files missing", errors)
     expected = {
-        "darwin-arm64": ("48b220d90ba69462b24fb214a5cf1ecc9e3d4785e7d8e32e63ceb9ca739b9d8a", 37716918),
-        "darwin-amd64": ("9c72803f4c883af971b43c968023b925f8c085e79672ac2c66d8a65e80a571d4", 41711896),
-        "linux-arm64": ("ad5ed775e8719781df40add6b815f7c823bbe1640dcba45d846145b8c8d8b88d", 49845139),
-        "linux-arm64-musl": ("2ea1b1edc121bc747e88f9bdf6740622db18035768b7033f5ed6b5d659e9d6fb", 48537619),
-        "linux-amd64": ("72f4b210bf6a9f854e7dc85dba1bddc935eae4f1efff41da1ced0bf330ae2dee", 50417468),
-        "linux-amd64-baseline": ("2ee5797c634dc2277a16b64cc5f1faf855c3d2ee497bb86c18e449803a4d3328", 50043332),
-        "linux-amd64-musl": ("90ff9351c24a45787450551bdbb6352e4d9ad16299be84021729f9e2d0e6945f", 49176709),
-        "windows-amd64": ("f0970f29e525b18e3be67ea4692ec2dde073f65a95eec9ad0b81e07b32d1b62c", 59903461),
-        "windows-amd64-legacy": ("ed160f0075a8ac048ea34a6e92ed047739957c4bca8020821cb2bfe3c521fc9e", 55343806),
+        "darwin-arm64": ("qodercli-darwin-arm64.tar.gz", "a91892460b337d8ca3ae2a2789d679a7c9722369200dc3db36c07c0f7db6e273", 37888191),
+        "darwin-amd64": ("qodercli-darwin-x64.tar.gz", "8134472d822fac09fa8967699bc35d3693fb0e70b03132ddf75775a599a4795d", 41890101),
+        "linux-arm64-musl": ("qodercli-linux-arm64-musl.tar.gz", "16777e6135de3601085488dec9cd0c608ee50ece82d0bb007cd60ee3a4a5dcae", 48714463),
+        "linux-arm64": ("qodercli-linux-arm64.tar.gz", "3bff6443dd82198b165cb4154ead7ea428bc3640203e75b9641feaf60a8a5d3a", 50004403),
+        "linux-amd64-baseline": ("qodercli-linux-x64-baseline.tar.gz", "b5a3ef827e82283230928c4d91d98acf288309161785bdb4a700993a466eebcb", 50218319),
+        "linux-amd64-musl": ("qodercli-linux-x64-musl.tar.gz", "0d76b3af8a4236c8ffef535f43dd6b703901c0fad6dbcbc7bfeb26cf5a351e70", 49345269),
+        "linux-amd64": ("qodercli-linux-x64.tar.gz", "027006a42eafe4e6badd9906d9986927dffadb98b73a3bb8df72e07f2ec4723b", 50589197),
+        "windows-amd64-legacy": ("qodercli-windows-x64-legacy.zip", "98c784be96f894d016fa766528a13759ed68e108c0a69cd9d2194590f08c4e83", 55338658),
+        "windows-amd64": ("qodercli-windows-x64.zip", "c41b44855f2fd800299e94a451a8c6d589e82dbd27a3083525dd6981842315eb", 60070506),
     }
     if isinstance(files, dict):
-        for key, (digest, size) in expected.items():
+        require(sorted(files) == sorted(expected), "baseline asset id set mismatch", errors)
+        for key, (filename, digest, size) in expected.items():
             asset = files.get(key)
             require(isinstance(asset, dict), f"asset missing: {key}", errors)
             if isinstance(asset, dict):
+                require(asset.get("filename") == filename, f"asset filename mismatch: {key}", errors)
                 require(asset.get("sha256") == digest, f"asset digest mismatch: {key}", errors)
                 require(asset.get("size") == size, f"asset size mismatch: {key}", errors)
-                require(
-                    str(asset.get("url", "")).startswith(
-                        "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.5/"
-                    ),
-                    f"asset URL mismatch: {key}",
-                    errors,
-                )
+                require(str(asset.get("url", "")).startswith("https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.7/"), f"asset URL mismatch: {key}", errors)
+    release_sources = baseline.get("manifest", {}).get("release_page_source_downloads")
+    require(baseline.get("manifest", {}).get("release_page_total_downloads") == 14, "release page count mismatch", errors)
+    require(release_sources == ["source-code.zip", "source-code.tar.gz"], "source archive split mismatch", errors)
 
 
-def validate_setups(errors: list[str]) -> None:
+def validate_setup_profiles(errors: list[str]) -> None:
     manifest = read_json("build/manifest.json")
     contract = read_json("config/nddev-contract.json")
     require(manifest.get("setup_ids") == SETUP_IDS, "manifest setup ids mismatch", errors)
-    setup_system = contract.get("setup_system")
-    require(isinstance(setup_system, dict), "contract setup_system missing", errors)
-    if isinstance(setup_system, dict):
-        require(setup_system.get("setup_ids") == SETUP_IDS, "contract setup ids mismatch", errors)
-        require(setup_system.get("builder_default_on") is True, "builder default mismatch", errors)
-    for setup_id in SETUP_IDS:
-        metadata = read_json(f"setups/{setup_id}/setup.json")
-        settings = read_json(f"setups/{setup_id}/settings.json")
-        require(metadata.get("id") == setup_id, f"{setup_id} id mismatch", errors)
-        require(
-            metadata.get("launch_args") == LAUNCH_ARGS[setup_id],
-            f"{setup_id} launch args mismatch",
-            errors,
-        )
-        require(
-            metadata.get("builder_default_on") is True, f"{setup_id} builder not default-on", errors
-        )
-        require(
-            metadata.get("builder_projection") == "native-plugin-plus-user-files",
-            f"{setup_id} builder projection mismatch",
-            errors,
-        )
-        require(
-            settings.get("general", {}).get("enableAutoUpdate") is False,
-            f"{setup_id} update must be disabled",
-            errors,
-        )
-        require(
-            settings.get("enabledPlugins") == {"nddev-builder@local": True},
-            f"{setup_id} builder plugin must be enabled",
-            errors,
-        )
-        require(
-            settings.get("extraKnownMarketplaces") == {},
-            f"{setup_id} marketplace must be empty",
-            errors,
-        )
-        require(
-            settings.get("sandbox", {}).get("gitAuth") is False,
-            f"{setup_id} git auth must be off",
-            errors,
-        )
-        require(
-            settings.get("sandbox", {}).get("ghAuth") is False,
-            f"{setup_id} gh auth must be off",
-            errors,
-        )
+    require(manifest.get("profile_ids") == PROFILE_IDS, "manifest profile ids mismatch", errors)
+    setup_system = contract.get("setup_system", {})
+    require(setup_system.get("setup_ids") == SETUP_IDS, "contract setup ids mismatch", errors)
+    require(setup_system.get("profile_ids") == PROFILE_IDS, "contract profile ids mismatch", errors)
+    setup = read_json("setups/nddev-builder/setup.json")
+    settings = read_json("setups/nddev-builder/settings.json")
+    require(setup.get("id") == "nddev-builder", "setup id mismatch", errors)
+    require(setup.get("builder_projection") == "native-plugin", "builder projection mismatch", errors)
+    require(settings.get("general", {}).get("enableAutoUpdate") is False, "autoupdate must be disabled", errors)
+    require(settings.get("permissions", {}).get("trustDirectories") == [], "setup trustDirectories must be manager-filled", errors)
+    require(settings.get("enabledPlugins") == {"nddev-builder@local": True}, "builder plugin must be enabled", errors)
+    profiles = {profile_id: read_json(f"profiles/{profile_id}/profile.json") for profile_id in PROFILE_IDS}
+    require(profiles["full-auto"].get("permission_mode") == "bypass_permissions", "full-auto mode mismatch", errors)
+    require(profiles["full-auto"].get("launch_args") == ["--permission-mode", "bypass_permissions"], "full-auto argv mismatch", errors)
+    require(profiles["safe"].get("permission_mode") == "dont_ask", "safe mode mismatch", errors)
+    require(profiles["safe"].get("launch_args") == ["--permission-mode", "dont_ask"], "safe argv mismatch", errors)
 
 
-def validate_builder(errors: list[str]) -> None:
-    build = read_json("build/version.json")
+def validate_runtime_contract(errors: list[str]) -> None:
+    manifest = read_json("build/manifest.json")
     contract = read_json("config/nddev-contract.json")
-    plugin = read_json("plugins/nddev-builder/.qoder-plugin/plugin.json")
-    hooks = read_json("plugins/nddev-builder/hooks/hooks.json")
-    builder = contract.get("builder_capability")
-    require(plugin.get("name") == "nddev-builder", "builder name mismatch", errors)
-    require(
-        plugin.get("version") == build.get("nddev_builder_plugin_version"),
-        "builder version mismatch",
-        errors,
-    )
-    require(plugin.get("skills") == "skills", "builder skills path mismatch", errors)
-    require(plugin.get("agents") == "agents", "builder agents path mismatch", errors)
-    require(plugin.get("hooks") == "hooks/hooks.json", "builder hooks path mismatch", errors)
-    require(isinstance(hooks.get("hooks"), dict), "builder hooks must use Qoder hook object", errors)
-    require("Stop" in hooks.get("hooks", {}), "builder Stop hook missing", errors)
-    require(isinstance(builder, dict), "contract builder missing", errors)
-    if isinstance(builder, dict):
-        require(
-            builder.get("projection") == "qoder-native-plugin-user-files",
-            "builder projection mismatch",
-            errors,
-        )
-        require(builder.get("default_on") is True, "builder default_on mismatch", errors)
-        require(builder.get("marketplace") is None, "builder marketplace must be null", errors)
-    for relative in (
-        "plugins/nddev-builder/.qoder-plugin/plugin.json",
-        "plugins/nddev-builder/skills/nddev-builder/SKILL.md",
-        "plugins/nddev-builder/agents/nddev-builder.md",
-        "plugins/nddev-builder/hooks/hooks.json",
-    ):
-        require((ROOT / relative).is_file(), f"missing builder native file: {relative}", errors)
+    baseline = read_json("references/qoder-cli-baseline.json")
+    require(manifest.get("managed_files") == MANAGED_FILES, "manifest managed file set mismatch", errors)
+    runtime = contract.get("runtime_launch", {})
+    require(runtime.get("config_directory_environment_variable") == "QODER_CONFIG_DIR", "QODER_CONFIG_DIR contract mismatch", errors)
+    require(runtime.get("credential_environment_allowlist") == ["QODER_PERSONAL_ACCESS_TOKEN"], "credential allowlist mismatch", errors)
+    require(runtime.get("caller_home_credentials_inherited") is False, "caller home inheritance mismatch", errors)
+    require(runtime.get("requires_managed_trust_directory") is True, "trusted directory requirement mismatch", errors)
+    require(runtime.get("lifecycle_coordination_held_through_child") is True, "launch coordination lifetime mismatch", errors)
+    transaction = contract.get("transaction_policy", {})
+    require(transaction.get("adr") == "docs/adr/0003-transactional-lifecycle-contract.md@15361ed", "ADR pin mismatch", errors)
+    require(transaction.get("read_only_no_create") is True, "read-only no-create mismatch", errors)
+    require("TMPDIR" in str(transaction.get("stable_lock_root")), "stable lock root contract mismatch", errors)
+    require(".work-*" in str(transaction.get("prepare_authority")), "prepare authority contract mismatch", errors)
+    require("retired marker" in str(transaction.get("cleanup_retirement")), "cleanup retirement contract mismatch", errors)
+    manifest_transaction = manifest.get("transaction_policy", {})
+    require(manifest_transaction.get("stable_lock_root") == transaction.get("stable_lock_root"), "manifest stable lock root mismatch", errors)
+    require(manifest_transaction.get("prepare_authority") == transaction.get("prepare_authority"), "manifest prepare authority mismatch", errors)
+    require(manifest_transaction.get("cleanup_retirement") == transaction.get("cleanup_retirement"), "manifest cleanup retirement mismatch", errors)
+    require(manifest.get("runtime_launch", {}).get("lifecycle_coordination_held_through_child") is True, "manifest launch coordination mismatch", errors)
+    selection = baseline.get("product_host_selection", {})
+    require(selection.get("supported_host_ids") == SUPPORTED_HOST_IDS, "supported host ids mismatch", errors)
+    require(selection.get("unsupported_categories") == UNSUPPORTED_CATEGORIES, "unsupported categories mismatch", errors)
+    require(selection.get("ubuntu_version_floor") is None, "ubuntu version floor must be null", errors)
+    require(selection.get("ubuntu_floor_source") == "no-official-floor", "ubuntu floor source mismatch", errors)
+    software = manifest.get("software_install", {})
+    contract_software = contract.get("software_install", {})
+    require(software.get("bounds", {}).get("max_download_bytes") == EXPECTED["max_supported_product_asset_size"], "manifest download bound mismatch", errors)
+    require(contract_software.get("bounds", {}).get("max_download_bytes") == EXPECTED["max_supported_product_asset_size"], "contract download bound mismatch", errors)
+    require(software.get("supported_product_hosts") == SUPPORTED_HOST_IDS, "software host ids mismatch", errors)
+    require(software.get("unsupported_categories") == UNSUPPORTED_CATEGORIES, "software unsupported categories mismatch", errors)
+    require(software.get("ubuntu_version_floor") is None, "software ubuntu floor must be null", errors)
 
 
-def validate_public_tree(errors: list[str]) -> None:
-    own_path = Path(__file__).resolve()
-    for path in sorted(ROOT.rglob("*")):
-        if path.is_dir() or ".git" in path.parts or "__pycache__" in path.parts:
-            continue
-        if path.resolve() == own_path:
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore").lower()
-        if PLACEHOLDER_MARKER in text:
-            errors.append(f"placeholder marker found in {path.relative_to(ROOT)}")
+def validate_manager_surface(errors: list[str]) -> None:
+    try:
+        manager = load_manager()
+        require(manager.TESTED_VERSION == EXPECTED["qoder_version"], "manager tested version mismatch", errors)
+        require(manager.DEFAULT_SETUP_ID == "nddev-builder", "manager default setup mismatch", errors)
+        require(manager.DEFAULT_PROFILE_ID == "full-auto", "manager default profile mismatch", errors)
+        require(manager.ALLOWED_CREDENTIAL_ENV == ("QODER_PERSONAL_ACCESS_TOKEN",), "manager credential allowlist mismatch", errors)
+        require(manager.SOFTWARE_DOWNLOAD_MAX_BYTES == EXPECTED["max_supported_product_asset_size"], "manager download bound mismatch", errors)
+        require("QODER_MEMORY" not in manager.ALLOWED_CREDENTIAL_ENV, "manager must not allow QODER_MEMORY", errors)
+        require(manager.CLEANUP_PREPARE_INTENT_NAME == "NDDEV-QODER-CLI-PREPARE-INTENT.json", "prepare intent name mismatch", errors)
+        require(manager.CLEANUP_RETIRED_NAME == "NDDEV-QODER-CLI-CLEANUP-RETIRED.json", "retired marker name mismatch", errors)
+        with tempfile.TemporaryDirectory(prefix="nddev-qoder-public-tmpdir-") as tmp:
+            old_tmpdir = os.environ.get("TMPDIR")
+            os.environ["TMPDIR"] = tmp
+            try:
+                require(manager.fixed_temp_root() != Path(tmp).resolve(), "manager lock root follows caller TMPDIR", errors)
+            finally:
+                if old_tmpdir is None:
+                    os.environ.pop("TMPDIR", None)
+                else:
+                    os.environ["TMPDIR"] = old_tmpdir
+        manager.parse_args(["list", "--json"])
+        manager.parse_args(["update", "--target", "/tmp/example", "--json"])
+        manager.parse_args(["remove-cli", "--target", "/tmp/example", "--json"])
+    except Exception as exc:
+        errors.append(f"manager import/parse failed: {exc}")
+
+
+def validate_public_smoke(errors: list[str]) -> None:
+    manager = ROOT / "cli-tools" / "nddev_qoder_cli.py"
+    with tempfile.TemporaryDirectory(prefix="nddev-qoder-public-contract-") as tmp:
+        base = Path(tmp)
+        locks = base / "locks"
+        home = base / "home"
+        parent = base / "parent"
+        workspace = base / "workspace"
+        for directory in (locks, home, parent, workspace):
+            directory.mkdir(mode=0o700)
+            directory.chmod(0o700)
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "TMPDIR": str(locks),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        target = parent / "target"
+        commands = [
+            ["list", "--json"],
+            ["status", "--target", str(target), "--json"],
+            ["plan", "--target", str(target), "--workspace", str(workspace), "--json"],
+        ]
+        for command in commands:
+            completed = subprocess.run(
+                [sys.executable, "-B", str(manager), *command],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=20,
+            )
+            if completed.returncode != 0:
+                errors.append(f"public smoke failed {command}: {completed.stdout} {completed.stderr}")
+                continue
+            try:
+                payload = json.loads(completed.stdout)
+            except json.JSONDecodeError as exc:
+                errors.append(f"public smoke returned non-JSON {command}: {exc}")
+                continue
+            if not isinstance(payload, dict) or payload.get("ok") is not True:
+                errors.append(f"public smoke returned non-ok payload {command}: {payload!r}")
+        residue = sorted(path.relative_to(base).as_posix() for path in base.rglob("*"))
+        allowed = {"home", "locks", "parent", "workspace"}
+        if set(residue) - allowed:
+            errors.append(f"read-only smoke left residue: {residue}")
+
+
+def validate_no_cache_residue(errors: list[str]) -> None:
+    residue = [
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.rglob("*")
+        if path.name == "__pycache__" or path.suffix == ".pyc"
+    ]
+    require(not residue, f"cache residue present: {residue}", errors)
 
 
 def main() -> int:
     errors: list[str] = []
-    try:
-        validate_versions(errors)
-        validate_assets(errors)
-        validate_setups(errors)
-        validate_builder(errors)
-        validate_public_tree(errors)
-    except Exception as exc:  # noqa: BLE001
-        errors.append(str(exc))
+    validate_versions(errors)
+    validate_assets(errors)
+    validate_setup_profiles(errors)
+    validate_runtime_contract(errors)
+    validate_manager_surface(errors)
+    validate_public_smoke(errors)
+    validate_no_cache_residue(errors)
     if errors:
-        print(f"validate_public_contracts.py: FAIL ({len(errors)} error(s))")
         for error in errors:
-            print(f"  - {error}")
+            print(f"error: {error}")
         return 1
-    print("validate_public_contracts.py: PASS")
+    print("public contracts ok")
     return 0
 
 

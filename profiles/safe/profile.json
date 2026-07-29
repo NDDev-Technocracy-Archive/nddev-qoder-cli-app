@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "safe",
+  "description": "Future safe launch profile using Qoder CLI dont_ask.",
+  "permission_mode": "dont_ask",
+  "launch_args": ["--permission-mode", "dont_ask"],
+  "default": false
+}

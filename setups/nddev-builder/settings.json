@@ -1,20 +1,14 @@
 {
   "general": {
-    "defaultPermissionMode": "default",
+    "defaultPermissionMode": "bypass_permissions",
     "enableAutoUpdate": false
   },
   "permissions": {
-    "allow": ["Read", "Grep", "Glob"],
-    "ask": ["Edit", "Write", "Bash(*)"],
-    "deny": ["Bash(rm -rf:*)", "Bash(sudo:*)", "Bash(git push:*)"]
-  },
-  "autoMode": {
-    "enabled": false
+    "trustDirectories": []
   },
   "sandbox": {
     "gitAuth": false,
-    "ghAuth": false,
-    "network": "ask"
+    "ghAuth": false
   },
   "enabledPlugins": {
     "nddev-builder@local": true
