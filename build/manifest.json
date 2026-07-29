@@ -84,7 +84,6 @@
     "restore_backup_option": "--backup <0..9>"
   },
   "transaction_policy": {
-    "adr": "docs/adr/0003-transactional-lifecycle-contract.md@15361ed",
     "managed_file_mode": "0600",
     "new_target_mode": "0700",
     "external_coordination": "monotonic product anchor plus mutation-published canonical target anchors",

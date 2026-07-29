@@ -149,6 +149,13 @@ def validate_runtime_contract(errors: list[str]) -> None:
 
 
 def validate_public_tree(errors: list[str]) -> None:
+    require((ROOT / "AGENTS.md").is_file(), "root AGENTS.md is missing", errors)
+    require(
+        (ROOT / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        == "See [../AGENTS.md](../AGENTS.md) for the repository instructions.\n",
+        "Claude compatibility bridge mismatch",
+        errors,
+    )
     own_path = Path(__file__).resolve()
     for path in sorted(ROOT.rglob("*")):
         if path.is_dir() or ".git" in path.parts or path == own_path:

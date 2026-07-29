@@ -123,7 +123,6 @@
     "marketplace": null
   },
   "transaction_policy": {
-    "adr": "docs/adr/0003-transactional-lifecycle-contract.md@15361ed",
     "external_coordination": "monotonic product anchor and mutation-published canonical target anchors",
     "stable_lock_root": "platform-stable same-UID protected root independent of caller TMPDIR",
     "read_only_no_create": true,
