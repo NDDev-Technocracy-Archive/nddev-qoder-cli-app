@@ -161,6 +161,7 @@ def validate_runtime_contract(errors: list[str]) -> None:
 def validate_public_tree(errors: list[str]) -> None:
     require_regular("AGENTS.md", errors)
     require_regular(".claude/CLAUDE.md", errors)
+    require_regular("setups/nddev-builder/AGENTS.md", errors)
     claude = ROOT / ".claude"
     try:
         require(stat.S_ISDIR(claude.lstat().st_mode), ".claude is not a real directory", errors)
