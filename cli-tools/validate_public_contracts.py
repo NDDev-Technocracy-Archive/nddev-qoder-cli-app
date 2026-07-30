@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,15 @@ def read_json(relative: str) -> dict[str, Any]:
 def require(condition: bool, message: str, errors: list[str]) -> None:
     if not condition:
         errors.append(message)
+
+def require_regular(relative: str, errors: list[str]) -> None:
+    path = ROOT / relative
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        errors.append(f"missing required file: {relative}")
+        return
+    require(stat.S_ISREG(mode), f"required path is not a regular file: {relative}", errors)
 
 
 def validate_versions(errors: list[str]) -> None:
@@ -149,13 +159,21 @@ def validate_runtime_contract(errors: list[str]) -> None:
 
 
 def validate_public_tree(errors: list[str]) -> None:
-    require((ROOT / "AGENTS.md").is_file(), "root AGENTS.md is missing", errors)
-    require(
-        (ROOT / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
-        == "See [../AGENTS.md](../AGENTS.md) for the repository instructions.\n",
-        "Claude compatibility bridge mismatch",
-        errors,
-    )
+    require_regular("AGENTS.md", errors)
+    require_regular(".claude/CLAUDE.md", errors)
+    claude = ROOT / ".claude"
+    try:
+        require(stat.S_ISDIR(claude.lstat().st_mode), ".claude is not a real directory", errors)
+        require({path.name for path in claude.iterdir()} == {"CLAUDE.md"}, ".claude contains unexpected entries", errors)
+    except FileNotFoundError:
+        errors.append("missing required directory: .claude")
+    if (claude / "CLAUDE.md").exists() and not (claude / "CLAUDE.md").is_symlink():
+        require(
+            (claude / "CLAUDE.md").read_text(encoding="utf-8")
+            == "See [../AGENTS.md](../AGENTS.md) for the repository instructions.\n",
+            "Claude compatibility bridge mismatch",
+            errors,
+        )
     own_path = Path(__file__).resolve()
     for path in sorted(ROOT.rglob("*")):
         if path.is_dir() or ".git" in path.parts or path == own_path:

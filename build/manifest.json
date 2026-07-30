@@ -34,7 +34,7 @@
     },
     "administrator_policy_may_still_constrain_bypass": true,
     "caller_override_blocked": true,
-    "source": "profiles/<id>/profile.json and official Qoder CLI 1.1.7 help/probes"
+    "source": "profiles/<id>/profile.json and official Qoder CLI 1.1.8 help/probes"
   },
   "builder_capability": {
     "projection": "qoder-native-local-plugin",
@@ -48,7 +48,7 @@
   "runtime_compatibility": {
     "baseline_ref": "references/qoder-cli-baseline.json",
     "version_ref": "build/version.json",
-    "tested_version": "1.1.7",
+    "tested_version": "1.1.8",
     "npm_package": "@qoder-ai/qodercli",
     "manifest_url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
     "documentation": [
@@ -99,7 +99,7 @@
     "cleanup_pending_reported": true
   },
   "software_install": {
-    "tested_version": "1.1.7",
+    "tested_version": "1.1.8",
     "supported_product_hosts": ["macos-arm64", "macos-x64", "ubuntu-glibc-arm64", "ubuntu-glibc-x64"],
     "unsupported_categories": ["windows", "non-ubuntu-linux", "linux-musl", "unsupported-architecture"],
     "ubuntu_version_floor": null,
@@ -118,7 +118,7 @@
     "stage_version_probe": true,
     "target_owned": true,
     "bounds": {
-      "max_download_bytes": 50589197,
+      "max_download_bytes": 50610309,
       "max_tree_bytes": 536870912,
       "max_tree_paths": 5000
     },
