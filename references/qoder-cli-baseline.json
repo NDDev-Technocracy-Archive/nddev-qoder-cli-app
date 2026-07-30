@@ -1,7 +1,6 @@
 {
   "schema_version": 2,
   "source": "official-qoder-cli-manifest",
-  "observed_at": "2026-07-30",
   "install_script": {
     "url": "https://qoder.com/install",
     "base_url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli",
@@ -14,25 +13,8 @@
   "manifest": {
     "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
     "latest": "1.1.8",
-    "published_at": "2026-07-29T11:04:20.222Z",
     "sha256": "a2715b6047f6241df55cb498dc6d44a8c86e5c8cf6e95bb04123053ec9e4c771",
     "size": 2716,
-    "release_page_total_downloads": 14,
-    "release_page_source_downloads": [
-      "source-code.zip",
-      "source-code.tar.gz"
-    ],
-    "observed_uploaded_runtime_asset_ids": [
-      "qodercli-darwin-arm64.tar.gz",
-      "qodercli-darwin-x64.tar.gz",
-      "qodercli-linux-arm64-musl.tar.gz",
-      "qodercli-linux-arm64.tar.gz",
-      "qodercli-linux-x64-baseline.tar.gz",
-      "qodercli-linux-x64-musl.tar.gz",
-      "qodercli-linux-x64.tar.gz",
-      "qodercli-windows-x64-legacy.zip",
-      "qodercli-windows-x64.zip"
-    ],
     "files": {
       "darwin-arm64": {
         "os": "darwin",
@@ -89,26 +71,6 @@
         "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.8/qodercli-linux-x64.tar.gz",
         "sha256": "8d0daf68880f1f021de68c5b47909babb69cae36b81bb71380c37d97b0df2199",
         "size": 50610309
-      },
-      "windows-amd64-legacy": {
-        "os": "windows",
-        "arch": "amd64",
-        "filename": "qodercli-windows-x64-legacy.zip",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.8/qodercli-windows-x64-legacy.zip",
-        "sha256": "d14401c97ebc71aa269e82735039f787ad29967ebe3df0f3847f23d895f11f32",
-        "size": 55167527,
-        "runtime": "node-sea",
-        "variant": "legacy"
-      },
-      "windows-amd64": {
-        "os": "windows",
-        "arch": "amd64",
-        "filename": "qodercli-windows-x64.zip",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.8/qodercli-windows-x64.zip",
-        "sha256": "a8b6acdea3a086e8e7c7579011cfb89840017e7142bbc5f3db242b2a7c0ad18e",
-        "size": 60089521,
-        "runtime": "bun",
-        "variant": "standard"
       }
     }
   },

@@ -53,11 +53,6 @@ def validate_versions(errors: list[str]) -> None:
     require(manifest.get("build_version") == version, "manifest version mismatch", errors)
     require(build.get("python_requires") == ">=3.9", "python requirement mismatch", errors)
     require(baseline.get("manifest", {}).get("latest") == build.get("qoder_cli_tested"), "baseline version mismatch", errors)
-    require(
-        baseline.get("manifest", {}).get("published_at") == build.get("qoder_cli_published_at"),
-        "publication timestamp mismatch",
-        errors,
-    )
     for owner, runtime in (
         ("manifest", manifest.get("runtime_compatibility", {})),
         ("contract", contract.get("runtime_compatibility", {})),
@@ -71,7 +66,20 @@ def validate_assets(errors: list[str]) -> None:
     baseline = read_json("references/qoder-cli-baseline.json")
     manifest = baseline.get("manifest", {})
     files = manifest.get("files", {})
-    require(isinstance(files, dict) and len(files) == 9, "asset catalog mismatch", errors)
+    require(isinstance(files, dict) and len(files) == 7, "asset catalog mismatch", errors)
+    require("observed_at" not in baseline, "observation date must remain private", errors)
+    for key in (
+        "published_at",
+        "release_page_total_downloads",
+        "release_page_source_downloads",
+        "observed_uploaded_runtime_asset_ids",
+    ):
+        require(key not in manifest, f"raw manifest observation must remain private: {key}", errors)
+    require(
+        not any(str(key).startswith("windows-") for key in files),
+        "unsupported Windows asset observations must remain private",
+        errors,
+    )
     for key, asset in files.items():
         require(isinstance(asset, dict), f"asset is not an object: {key}", errors)
         if not isinstance(asset, dict):
