@@ -10,8 +10,6 @@ state, and does not inherit caller home-directory credentials.
 
 - Command: `qodercli`
 - Package identity: `@qoder-ai/qodercli`
-- Tested version: `1.1.7`
-- Published: `2026-07-28T10:58:43.023Z`
 - Install manifest: `https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json`
 - Managed config root: `QODER_CONFIG_DIR=<absolute-target>`
 
@@ -70,7 +68,8 @@ Only locale/terminal variables and `QODER_PERSONAL_ACCESS_TOKEN` are inherited
 from the caller. External Git, package-manager, and provider credentials from
 the caller's home are intentionally not inherited.
 
-Qoder CLI 1.1.7 does not provide a proven non-interactive trust command. This
+The tested Qoder CLI baseline does not provide a proven non-interactive trust
+command. This
 manager writes and verifies `permissions.trustDirectories` in the target
 `settings.json`; launch fails closed if the requested workspace is not exactly
 the managed trusted workspace.
