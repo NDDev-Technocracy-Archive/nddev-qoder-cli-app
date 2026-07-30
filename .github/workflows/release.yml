@@ -24,8 +24,8 @@ jobs:
       version: ${{ github.ref_name }}
       package_name: nddev-qoder-cli-app
       archive_paths: >-
-        README.md LICENSE VERSION CHANGELOG.md SECURITY.md .github build
-        cli-tools config plugins references setups
+        README.md LICENSE VERSION CHANGELOG.md SECURITY.md AGENTS.md .claude
+        .github build cli-tools config plugins profiles references setups
       runtime_paths: >-
-        README.md LICENSE VERSION build cli-tools config plugins references
-        setups
+        README.md LICENSE VERSION AGENTS.md .claude build cli-tools config
+        plugins profiles references setups

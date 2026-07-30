@@ -39,6 +39,28 @@ def require_regular(relative: str, errors: list[str]) -> None:
     require(stat.S_ISREG(mode), f"required path is not a regular file: {relative}", errors)
 
 
+def validate_release_closures(errors: list[str]) -> None:
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    required = {
+        "README.md",
+        "LICENSE",
+        "VERSION",
+        "AGENTS.md",
+        ".claude",
+        "build",
+        "cli-tools",
+        "config",
+        "plugins",
+        "profiles",
+        "references",
+        "setups",
+    }
+    for closure in ("archive_paths", "runtime_paths"):
+        match = re.search(rf"(?m)^      {closure}: >-\n((?:        .+\n?)+)", release)
+        members = set(match.group(1).split()) if match else set()
+        require(required.issubset(members), f"release {closure} membership is incomplete", errors)
+
+
 def validate_versions(errors: list[str]) -> None:
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     build = read_json("build/version.json")
@@ -194,6 +216,7 @@ def validate_public_tree(errors: list[str]) -> None:
 def main() -> int:
     errors: list[str] = []
     for check in (
+        validate_release_closures,
         validate_versions,
         validate_assets,
         validate_setup_profiles,
