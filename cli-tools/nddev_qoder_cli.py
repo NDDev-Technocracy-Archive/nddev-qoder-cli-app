@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import errno
 import hashlib
 import json
 import os
@@ -18,8 +17,8 @@ import sys
 import tarfile
 import tempfile
 import time
-import uuid
 import urllib.request
+import uuid
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
@@ -83,9 +82,15 @@ SETUP_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 PROFILE_ID_PATTERN = SETUP_ID_PATTERN
 ANCHOR_TEMP_PATTERN = re.compile(r"\.[A-Za-z0-9._-]+\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
 JOURNAL_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-CLEANUP\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
-CLEANUP_INTENT_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-CLEANUP-INTENT\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
-PREPARE_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-PREPARE-INTENT\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
-RETIRED_TEMP_PATTERN = re.compile(r"\.NDDEV-QODER-CLI-CLEANUP-RETIRED\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z")
+CLEANUP_INTENT_TEMP_PATTERN = re.compile(
+    r"\.NDDEV-QODER-CLI-CLEANUP-INTENT\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z"
+)
+PREPARE_TEMP_PATTERN = re.compile(
+    r"\.NDDEV-QODER-CLI-PREPARE-INTENT\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z"
+)
+RETIRED_TEMP_PATTERN = re.compile(
+    r"\.NDDEV-QODER-CLI-CLEANUP-RETIRED\.json\.pubtmp\.[0-9]+-[a-f0-9]+\Z"
+)
 WORK_ROOT_PATTERN = re.compile(r"\.work-[a-f0-9]{32}-[a-z0-9-]+\Z")
 STAGE_ROOT_PATTERN = re.compile(r"\.stage-[a-f0-9]{32}\Z")
 
@@ -792,7 +797,9 @@ def load_strict_json_file(path: Path, label: str, *, read_only: bool) -> dict[st
     return parse_json_object(content, label)
 
 
-def read_regular_fd(fd: int, label: str, *, max_bytes: int = METADATA_MAX_BYTES) -> tuple[bytes, os.stat_result]:
+def read_regular_fd(
+    fd: int, label: str, *, max_bytes: int = METADATA_MAX_BYTES
+) -> tuple[bytes, os.stat_result]:
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode):
         fail(f"{label} must be a regular file")
@@ -815,7 +822,9 @@ def read_regular_fd(fd: int, label: str, *, max_bytes: int = METADATA_MAX_BYTES)
 def fixed_temp_root() -> Path:
     """Return the platform rendezvous root, independent of caller TMPDIR."""
 
-    candidates = [Path("/private/tmp"), Path("/tmp")] if sys.platform == "darwin" else [Path("/tmp")]
+    candidates = (
+        [Path("/private/tmp"), Path("/tmp")] if sys.platform == "darwin" else [Path("/tmp")]
+    )
     root: Optional[Path] = None
     for candidate in candidates:
         try:
@@ -864,7 +873,9 @@ def target_anchor_path(canonical_target: Path) -> Path:
     return lock_pool_path() / "targets" / f"{target_digest(canonical_target)}.lock"
 
 
-def anchor_binding(kind: str, path: Path, canonical_target: Optional[Path] = None) -> dict[str, Any]:
+def anchor_binding(
+    kind: str, path: Path, canonical_target: Optional[Path] = None
+) -> dict[str, Any]:
     binding: dict[str, Any] = {
         "schema_version": 1,
         "product_name": PRODUCT_NAME,
@@ -892,7 +903,9 @@ def anchor_binding(kind: str, path: Path, canonical_target: Optional[Path] = Non
     return binding
 
 
-def expected_anchor_value(path: Path, kind: str, canonical_target: Optional[Path]) -> dict[str, Any]:
+def expected_anchor_value(
+    path: Path, kind: str, canonical_target: Optional[Path]
+) -> dict[str, Any]:
     return anchor_binding(kind, path, canonical_target)
 
 
@@ -929,7 +942,9 @@ def validate_anchor_fd(
     return after
 
 
-def validate_anchor_binding(path: Path, kind: str, canonical_target: Optional[Path], *, read_only: bool) -> None:
+def validate_anchor_binding(
+    path: Path, kind: str, canonical_target: Optional[Path], *, read_only: bool
+) -> None:
     label = f"{kind} lifecycle anchor"
     value = load_strict_json_file(path, label, read_only=read_only)
     expected = expected_anchor_value(path, kind, canonical_target)
@@ -937,7 +952,9 @@ def validate_anchor_binding(path: Path, kind: str, canonical_target: Optional[Pa
         fail(f"{label} binding is malformed or mismatched")
 
 
-def open_anchor_fd(path: Path, kind: str, canonical_target: Optional[Path], *, read_only: bool) -> int:
+def open_anchor_fd(
+    path: Path, kind: str, canonical_target: Optional[Path], *, read_only: bool
+) -> int:
     flags = os.O_RDWR if not read_only else os.O_RDONLY
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
@@ -1320,7 +1337,10 @@ def load_setup_metadata(setup_id: str) -> dict[str, Any]:
         fail(f"setup {setup_id} metadata identity mismatch")
     if metadata["managed_files"] != ["settings.json", "AGENTS.md"]:
         fail(f"setup {setup_id} managed file declaration is invalid")
-    if metadata["builder_projection"] != "native-plugin" or metadata["builder_default_on"] is not True:
+    if (
+        metadata["builder_projection"] != "native-plugin"
+        or metadata["builder_default_on"] is not True
+    ):
         fail(f"setup {setup_id} must enable native builder projection")
     return metadata
 
@@ -1488,7 +1508,9 @@ def validate_managed_plugin_tree(target: Path) -> None:
     if not path_exists_no_follow(root):
         return
     require_private_directory(root, "managed plugin root")
-    expected = {str(relative.relative_to(MANAGED_PLUGIN_ROOT)) for _, relative in BUILDER_SOURCE_FILES}
+    expected = {
+        str(relative.relative_to(MANAGED_PLUGIN_ROOT)) for _, relative in BUILDER_SOURCE_FILES
+    }
     expected_dirs = set()
     for raw in expected:
         path = Path(raw)
@@ -1514,7 +1536,9 @@ def validate_managed_plugin_tree(target: Path) -> None:
     if actual_files - expected:
         fail(f"managed plugin tree contains unmanaged files: {sorted(actual_files - expected)}")
     if actual_dirs - expected_dirs:
-        fail(f"managed plugin tree contains unmanaged directories: {sorted(actual_dirs - expected_dirs)}")
+        fail(
+            f"managed plugin tree contains unmanaged directories: {sorted(actual_dirs - expected_dirs)}"
+        )
 
 
 def any_managed_path_exists(target: Path) -> bool:
@@ -1544,7 +1568,10 @@ def load_stamp(target: Path) -> Optional[dict[str, Any]]:
         value["permission_mode"],
     ]:
         fail("setup stamp launch arguments are malformed")
-    if not isinstance(value["trusted_workspace"], str) or not Path(value["trusted_workspace"]).is_absolute():
+    if (
+        not isinstance(value["trusted_workspace"], str)
+        or not Path(value["trusted_workspace"]).is_absolute()
+    ):
         fail("setup stamp trusted workspace is malformed")
     if value["cleanup_pending"] is not False:
         fail("setup stamp cleanup_pending must be false; cleanup state is reported separately")
@@ -1560,7 +1587,9 @@ def validate_managed_files(target: Path, stamp: dict[str, Any]) -> list[str]:
     for relative in ordered:
         if relative.is_absolute() or ".." in relative.parts:
             fail("setup stamp contains an unsafe managed path")
-        content, _ = read_regular_file(target / relative, f"managed file {relative}", owner_only=True)
+        content, _ = read_regular_file(
+            target / relative, f"managed file {relative}", owner_only=True
+        )
         if managed_digest(relative, content) != expected[str(relative)]:
             drift.append(str(relative))
     if drift:
@@ -1568,7 +1597,9 @@ def validate_managed_files(target: Path, stamp: dict[str, Any]) -> list[str]:
     return sorted(expected)
 
 
-def read_existing_settings_if_managed(target: Path, state: dict[str, Any]) -> Optional[dict[str, Any]]:
+def read_existing_settings_if_managed(
+    target: Path, state: dict[str, Any]
+) -> Optional[dict[str, Any]]:
     if state.get("state") != "managed":
         return None
     return load_json_object(target / "settings.json", "existing settings.json", owner_only=True)
@@ -1602,9 +1633,13 @@ def relative_to_target(target: Path, path: Path) -> Path:
     raise AssertionError("unreachable")
 
 
-def file_record_for_path(root: Path, relative: Path, *, max_bytes: int = MANAGED_PAYLOAD_MAX_BYTES) -> dict[str, Any]:
+def file_record_for_path(
+    root: Path, relative: Path, *, max_bytes: int = MANAGED_PAYLOAD_MAX_BYTES
+) -> dict[str, Any]:
     path = root / relative
-    content, info = read_regular_file(path, f"file record {relative}", owner_only=True, max_bytes=max_bytes)
+    content, info = read_regular_file(
+        path, f"file record {relative}", owner_only=True, max_bytes=max_bytes
+    )
     return {
         "path": relative.as_posix(),
         "size": info.st_size,
@@ -1615,7 +1650,13 @@ def file_record_for_path(root: Path, relative: Path, *, max_bytes: int = MANAGED
 def stat_record(path: Path, root: Path) -> dict[str, Any]:
     info = path.lstat()
     relative = "." if path == root else path.relative_to(root).as_posix()
-    kind = "directory" if stat.S_ISDIR(info.st_mode) else "file" if stat.S_ISREG(info.st_mode) else "other"
+    kind = (
+        "directory"
+        if stat.S_ISDIR(info.st_mode)
+        else "file"
+        if stat.S_ISREG(info.st_mode)
+        else "other"
+    )
     record = {
         "relative_path": relative,
         "kind": kind,
@@ -1628,7 +1669,9 @@ def stat_record(path: Path, root: Path) -> dict[str, Any]:
         "mtime_ns": info.st_mtime_ns,
     }
     if kind == "file":
-        content, _ = read_regular_file(path, f"cleanup file {relative}", max_bytes=MAX_CLEANUP_TREE_BYTES)
+        content, _ = read_regular_file(
+            path, f"cleanup file {relative}", max_bytes=MAX_CLEANUP_TREE_BYTES
+        )
         record["sha256"] = sha256_bytes(content)
     return record
 
@@ -1663,7 +1706,9 @@ def cleanup_tree_sha256(records: list[dict[str, Any]]) -> str:
     return sha256_bytes(canonical_json(records))
 
 
-def validate_bounded_relative(raw: str, label: str, *, first_pattern: Optional[re.Pattern[str]] = None) -> Path:
+def validate_bounded_relative(
+    raw: str, label: str, *, first_pattern: Optional[re.Pattern[str]] = None
+) -> Path:
     path = normalize_relative_path(raw, label)
     if len(path.parts) > 24 or any(len(part) > 128 for part in path.parts):
         fail(f"{label} path exceeds bound")
@@ -1692,7 +1737,13 @@ def object_identity_record(path: Path, anchor_root: Path, label: str) -> dict[st
         fail(f"{label} is missing")
     if stat.S_ISLNK(info.st_mode):
         fail(f"{label} must not be a symlink")
-    kind = "directory" if stat.S_ISDIR(info.st_mode) else "file" if stat.S_ISREG(info.st_mode) else "other"
+    kind = (
+        "directory"
+        if stat.S_ISDIR(info.st_mode)
+        else "file"
+        if stat.S_ISREG(info.st_mode)
+        else "other"
+    )
     if kind == "other":
         fail(f"{label} has unsupported object kind")
     try:
@@ -1711,12 +1762,16 @@ def object_identity_record(path: Path, anchor_root: Path, label: str) -> dict[st
         "mtime_ns": info.st_mtime_ns,
     }
     if kind == "file":
-        content, _ = read_regular_file(path, label, max_bytes=MAX_CLEANUP_TREE_BYTES, allow_nlink=None)
+        content, _ = read_regular_file(
+            path, label, max_bytes=MAX_CLEANUP_TREE_BYTES, allow_nlink=None
+        )
         record["sha256"] = sha256_bytes(content)
     return record
 
 
-def validate_identity_record(path: Path, record: dict[str, Any], label: str, *, stable_only: bool) -> None:
+def validate_identity_record(
+    path: Path, record: dict[str, Any], label: str, *, stable_only: bool
+) -> None:
     required = {"relative_path", "kind", "mode", "uid", "nlink", "dev", "ino", "size", "mtime_ns"}
     if record.get("kind") == "file":
         required.add("sha256")
@@ -1727,7 +1782,13 @@ def validate_identity_record(path: Path, record: dict[str, Any], label: str, *, 
         fail(f"{label} is missing")
     if stat.S_ISLNK(info.st_mode):
         fail(f"{label} must not be a symlink")
-    kind = "directory" if stat.S_ISDIR(info.st_mode) else "file" if stat.S_ISREG(info.st_mode) else "other"
+    kind = (
+        "directory"
+        if stat.S_ISDIR(info.st_mode)
+        else "file"
+        if stat.S_ISREG(info.st_mode)
+        else "other"
+    )
     if kind != record["kind"]:
         fail(f"{label} kind changed")
     if identity_of(info) != (record["dev"], record["ino"]):
@@ -1736,10 +1797,16 @@ def validate_identity_record(path: Path, record: dict[str, Any], label: str, *, 
         fail(f"{label} ownership or mode changed")
     if stable_only:
         return
-    if info.st_nlink != record["nlink"] or info.st_size != record["size"] or info.st_mtime_ns != record["mtime_ns"]:
+    if (
+        info.st_nlink != record["nlink"]
+        or info.st_size != record["size"]
+        or info.st_mtime_ns != record["mtime_ns"]
+    ):
         fail(f"{label} metadata changed")
     if record["kind"] == "file":
-        content, _ = read_regular_file(path, label, max_bytes=MAX_CLEANUP_TREE_BYTES, allow_nlink=None)
+        content, _ = read_regular_file(
+            path, label, max_bytes=MAX_CLEANUP_TREE_BYTES, allow_nlink=None
+        )
         if sha256_bytes(content) != record["sha256"]:
             fail(f"{label} content changed")
 
@@ -1762,14 +1829,26 @@ def validate_cleanup_relative(relative: str) -> Path:
     return path
 
 
-def validate_cleanup_records(root: Path, records: list[dict[str, Any]], *, allow_partial: bool) -> None:
+def validate_cleanup_records(
+    root: Path, records: list[dict[str, Any]], *, allow_partial: bool
+) -> None:
     if not isinstance(records, list) or not records:
         fail("cleanup record list is malformed")
     by_relative: dict[str, dict[str, Any]] = {}
     for record in records:
         if not isinstance(record, dict):
             fail("cleanup record entry is malformed")
-        required = {"relative_path", "kind", "mode", "uid", "nlink", "dev", "ino", "size", "mtime_ns"}
+        required = {
+            "relative_path",
+            "kind",
+            "mode",
+            "uid",
+            "nlink",
+            "dev",
+            "ino",
+            "size",
+            "mtime_ns",
+        }
         if record.get("kind") == "file":
             required.add("sha256")
         require_exact_keys(record, required, "cleanup tree record")
@@ -1793,14 +1872,18 @@ def validate_cleanup_records(root: Path, records: list[dict[str, Any]], *, allow
         if owner_of(info) != record["uid"] or mode_of(info) != record["mode"]:
             fail(f"cleanup tombstone object ownership or mode changed: {relative}")
         if record["kind"] == "file":
-            content, _ = read_regular_file(path, f"cleanup tombstone file {relative}", max_bytes=MAX_CLEANUP_TREE_BYTES)
+            content, _ = read_regular_file(
+                path, f"cleanup tombstone file {relative}", max_bytes=MAX_CLEANUP_TREE_BYTES
+            )
             if info.st_size != record["size"] or sha256_bytes(content) != record["sha256"]:
                 fail(f"cleanup tombstone file content changed: {relative}")
         elif record["kind"] == "directory":
             if not stat.S_ISDIR(info.st_mode):
                 fail(f"cleanup tombstone directory kind changed: {relative}")
             declared_children = {
-                key.split("/", 1)[0] if relative == "." else key[len(relative) + 1 :].split("/", 1)[0]
+                key.split("/", 1)[0]
+                if relative == "."
+                else key[len(relative) + 1 :].split("/", 1)[0]
                 for key in by_relative
                 if key != relative and (relative == "." or key.startswith(relative + "/"))
             }
@@ -1818,7 +1901,12 @@ def validate_cleanup_records(root: Path, records: list[dict[str, Any]], *, allow
 
 
 def cleanup_journal_allowed_relatives(journal: dict[str, Any]) -> set[str]:
-    allowed = {CLEANUP_JOURNAL_NAME, CLEANUP_INTENT_NAME, CLEANUP_PREPARE_INTENT_NAME, CLEANUP_RETIRED_NAME}
+    allowed = {
+        CLEANUP_JOURNAL_NAME,
+        CLEANUP_INTENT_NAME,
+        CLEANUP_PREPARE_INTENT_NAME,
+        CLEANUP_RETIRED_NAME,
+    }
     for entry in journal["entries"]:
         root_relative = validate_cleanup_relative(entry["relative_path"])
         current = Path()
@@ -1873,7 +1961,9 @@ def validate_prepare_work_root_relative(relative: str) -> Path:
 
 def validate_cleanup_source_relative(relative: str) -> Path:
     path = validate_bounded_relative(relative, "cleanup source")
-    if not (WORK_ROOT_PATTERN.fullmatch(path.parts[0]) or STAGE_ROOT_PATTERN.fullmatch(path.parts[0])):
+    if not (
+        WORK_ROOT_PATTERN.fullmatch(path.parts[0]) or STAGE_ROOT_PATTERN.fullmatch(path.parts[0])
+    ):
         fail("cleanup source path is outside the declared manager namespace")
     return path
 
@@ -1895,7 +1985,9 @@ def cleanup_source_relative_to_parent(parent: Path, source: Path) -> Path:
     except OSError as exc:
         fail(f"cleanup source cannot be resolved under its canonical parent: {exc}")
     try:
-        return validate_cleanup_source_relative(resolved_source.relative_to(resolved_parent).as_posix())
+        return validate_cleanup_source_relative(
+            resolved_source.relative_to(resolved_parent).as_posix()
+        )
     except ValueError:
         fail("cleanup source is outside the fixed cleanup parent")
     raise AssertionError("unreachable")
@@ -1931,7 +2023,9 @@ def validate_prepare_intent(target: Path, intent: dict[str, Any]) -> None:
     ):
         fail("cleanup prepare intent is not bound to this target")
     work_relative = validate_prepare_work_root_relative(intent["work_relative_path"])
-    validate_identity_record(target, intent["target_root"], "cleanup prepare target root", stable_only=True)
+    validate_identity_record(
+        target, intent["target_root"], "cleanup prepare target root", stable_only=True
+    )
     entries = intent["entries"]
     if not isinstance(entries, list) or not 0 < len(entries) <= MAX_CLEANUP_ENTRIES:
         fail("cleanup prepare intent entry list is malformed")
@@ -1984,10 +2078,17 @@ def validate_prepare_intent(target: Path, intent: dict[str, Any]) -> None:
             fail("cleanup prepare intent lost both source and hold")
         if source_present:
             validate_cleanup_records(source, records, allow_partial=False)
-            validate_identity_record(source.parent, entry["source_parent"], "cleanup prepare source parent", stable_only=True)
+            validate_identity_record(
+                source.parent,
+                entry["source_parent"],
+                "cleanup prepare source parent",
+                stable_only=True,
+            )
         if hold_present:
             validate_cleanup_records(hold, records, allow_partial=False)
-            validate_identity_record(hold.parent, entry["hold_parent"], "cleanup prepare hold parent", stable_only=True)
+            validate_identity_record(
+                hold.parent, entry["hold_parent"], "cleanup prepare hold parent", stable_only=True
+            )
 
 
 def load_prepare_intent(target: Path, *, read_only: bool) -> Optional[dict[str, Any]]:
@@ -2006,7 +2107,9 @@ def load_prepare_intent(target: Path, *, read_only: bool) -> Optional[dict[str, 
 
 
 def remove_empty_prepare_work_root(target: Path, intent: dict[str, Any]) -> None:
-    root = cleanup_parent(target) / validate_prepare_work_root_relative(intent["work_relative_path"])
+    root = cleanup_parent(target) / validate_prepare_work_root_relative(
+        intent["work_relative_path"]
+    )
     if not path_exists_no_follow(root):
         return
     for path in sorted([root, *root.rglob("*")], key=lambda item: len(item.parts), reverse=True):
@@ -2105,7 +2208,12 @@ def validate_cleanup_intent(target: Path, intent: dict[str, Any]) -> None:
         )
         if entry["source_anchor"] != CLEANUP_DIR_NAME:
             fail("cleanup promotion intent source anchor is malformed")
-        if entry["source_kind"] not in {"managed-undo", "software-undo", "backup-undo", "stage-undo"}:
+        if entry["source_kind"] not in {
+            "managed-undo",
+            "software-undo",
+            "backup-undo",
+            "stage-undo",
+        }:
             fail("cleanup promotion intent source kind is unsupported")
         source_relative = validate_cleanup_source_relative(entry["source_relative_path"])
         destination_relative = validate_cleanup_relative(entry["destination_relative_path"])
@@ -2128,7 +2236,12 @@ def validate_cleanup_intent(target: Path, intent: dict[str, Any]) -> None:
             fail("cleanup promotion intent lost both source and tombstone")
         if source_present:
             validate_cleanup_records(source, records, allow_partial=False)
-            validate_identity_record(source.parent, entry["source_parent"], "cleanup promotion source parent", stable_only=True)
+            validate_identity_record(
+                source.parent,
+                entry["source_parent"],
+                "cleanup promotion source parent",
+                stable_only=True,
+            )
         if destination_present:
             validate_cleanup_records(destination, records, allow_partial=False)
             validate_identity_record(
@@ -2157,7 +2270,9 @@ def load_cleanup_intent(target: Path, *, read_only: bool) -> Optional[dict[str, 
 def journal_from_cleanup_intent(target: Path, intent: dict[str, Any]) -> dict[str, Any]:
     entries = [
         {
-            "relative_path": validate_cleanup_relative(entry["destination_relative_path"]).as_posix(),
+            "relative_path": validate_cleanup_relative(
+                entry["destination_relative_path"]
+            ).as_posix(),
             "source_kind": entry["source_kind"],
             "tree_sha256": entry["source_tree_sha256"],
             "records": entry["source_records"],
@@ -2185,8 +2300,12 @@ def recover_cleanup_intent_before_mutation(target: Path) -> bool:
     if intent is None:
         return False
     for entry in intent["entries"]:
-        source = cleanup_parent(target) / validate_cleanup_source_relative(entry["source_relative_path"])
-        destination = cleanup_parent(target) / validate_cleanup_relative(entry["destination_relative_path"])
+        source = cleanup_parent(target) / validate_cleanup_source_relative(
+            entry["source_relative_path"]
+        )
+        destination = cleanup_parent(target) / validate_cleanup_relative(
+            entry["destination_relative_path"]
+        )
         if path_exists_no_follow(source):
             if path_exists_no_follow(destination):
                 fail("cleanup promotion recovery found both source and tombstone")
@@ -2300,7 +2419,12 @@ def validate_cleanup_journal(
         if relative.as_posix() in seen:
             fail("cleanup journal has duplicate relative path")
         seen.add(relative.as_posix())
-        if entry["source_kind"] not in {"managed-undo", "software-undo", "backup-undo", "stage-undo"}:
+        if entry["source_kind"] not in {
+            "managed-undo",
+            "software-undo",
+            "backup-undo",
+            "stage-undo",
+        }:
             fail("cleanup journal source kind is unsupported")
         records = entry["records"]
         if cleanup_tree_sha256(records) != entry["tree_sha256"]:
@@ -2387,7 +2511,9 @@ def cleanup_pending_state(target: Path, *, read_only: bool) -> tuple[bool, dict[
     if not path_exists_no_follow(cleanup_parent(target)):
         return False, {"cleanup_pending": False}
     require_private_directory(cleanup_parent(target), "cleanup parent")
-    if path_exists_no_follow(cleanup_prepare_intent_path(target)) and not path_exists_no_follow(cleanup_journal_path(target)):
+    if path_exists_no_follow(cleanup_prepare_intent_path(target)) and not path_exists_no_follow(
+        cleanup_journal_path(target)
+    ):
         fail("cleanup prepare intent exists without a final journal")
     retired = load_cleanup_retired_marker(target, read_only=read_only)
     if retired is not None and not path_exists_no_follow(cleanup_journal_path(target)):
@@ -2418,7 +2544,11 @@ def delete_cleanup_entry(target: Path, entry: dict[str, Any]) -> None:
     root = cleanup_parent(target) / validate_cleanup_relative(entry["relative_path"])
     records = entry["records"]
     validate_cleanup_records(root, records, allow_partial=True)
-    for record in sorted(records, key=lambda item: (item["relative_path"].count("/"), item["relative_path"]), reverse=True):
+    for record in sorted(
+        records,
+        key=lambda item: (item["relative_path"].count("/"), item["relative_path"]),
+        reverse=True,
+    ):
         relative = record["relative_path"]
         path = root if relative == "." else root / relative
         if not path_exists_no_follow(path):
@@ -2427,7 +2557,9 @@ def delete_cleanup_entry(target: Path, entry: dict[str, Any]) -> None:
         if record["kind"] == "file":
             if identity_of(info) != (record["dev"], record["ino"]):
                 fail(f"cleanup tombstone object identity changed: {relative}")
-            content, _ = read_regular_file(path, f"cleanup file {relative}", max_bytes=MAX_CLEANUP_TREE_BYTES)
+            content, _ = read_regular_file(
+                path, f"cleanup file {relative}", max_bytes=MAX_CLEANUP_TREE_BYTES
+            )
             if sha256_bytes(content) != record["sha256"]:
                 fail(f"cleanup tombstone file content changed: {relative}")
             path.unlink()
@@ -2442,14 +2574,18 @@ def delete_cleanup_entry(target: Path, entry: dict[str, Any]) -> None:
                 declared_remaining = set()
                 for other in records:
                     other_rel = other["relative_path"]
-                    if other_rel == relative or not path_exists_no_follow(root if other_rel == "." else root / other_rel):
+                    if other_rel == relative or not path_exists_no_follow(
+                        root if other_rel == "." else root / other_rel
+                    ):
                         continue
                     if relative == ".":
                         declared_remaining.add(other_rel.split("/", 1)[0])
                     elif other_rel.startswith(relative + "/"):
                         declared_remaining.add(other_rel[len(relative) + 1 :].split("/", 1)[0])
                 if unknown - declared_remaining:
-                    fail(f"cleanup tombstone has unknown children before rmdir: {sorted(unknown - declared_remaining)}")
+                    fail(
+                        f"cleanup tombstone has unknown children before rmdir: {sorted(unknown - declared_remaining)}"
+                    )
                 if unknown:
                     continue
             path.rmdir()
@@ -2464,7 +2600,11 @@ def remove_empty_cleanup_dirs(target: Path) -> None:
     parent = cleanup_parent(target)
     if not path_exists_no_follow(parent):
         return
-    for path in sorted([path for path in parent.rglob("*") if path.is_dir() and not path.is_symlink()], key=lambda item: len(item.parts), reverse=True):
+    for path in sorted(
+        [path for path in parent.rglob("*") if path.is_dir() and not path.is_symlink()],
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
         try:
             path.rmdir()
         except OSError:
@@ -2556,7 +2696,9 @@ def finalize_retired_cleanup(target: Path) -> bool:
             with contextlib.suppress(OSError):
                 directory.rmdir()
                 fsync_parent(directory)
-        children = sorted(child.name for child in parent.iterdir() if child != cleanup_retired_path(target))
+        children = sorted(
+            child.name for child in parent.iterdir() if child != cleanup_retired_path(target)
+        )
         if children:
             fail(f"cleanup retired state has unexpected residue: {children}")
     cleanup_retired_path(target).unlink()
@@ -2578,7 +2720,9 @@ def drain_cleanup_before_mutation(target: Path) -> bool:
     if not path_exists_no_follow(cleanup_parent(target)):
         return False
     recovered = False
-    if path_exists_no_follow(cleanup_intent_path(target)) and not path_exists_no_follow(cleanup_journal_path(target)):
+    if path_exists_no_follow(cleanup_intent_path(target)) and not path_exists_no_follow(
+        cleanup_journal_path(target)
+    ):
         recovered = recover_cleanup_intent_before_mutation(target)
     elif not path_exists_no_follow(cleanup_journal_path(target)):
         recovered = recover_prepare_intent_before_mutation(target)
@@ -2624,7 +2768,9 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
         return False
     parent_creation = PrivateDirectoryCreation()
     parent_creation.ensure(parent, "cleanup parent")
-    if path_exists_no_follow(cleanup_journal_path(target)) or path_exists_no_follow(cleanup_intent_path(target)):
+    if path_exists_no_follow(cleanup_journal_path(target)) or path_exists_no_follow(
+        cleanup_intent_path(target)
+    ):
         fail("cleanup journal already exists")
     transaction_id = uuid.uuid4().hex
     tombstone_parent = parent / "tombstones" / transaction_id
@@ -2642,7 +2788,9 @@ def publish_cleanup_journal(target: Path, sources: list[tuple[Path, str]]) -> bo
                 "source_relative_path": source_relative.as_posix(),
                 "destination_relative_path": destination.relative_to(parent).as_posix(),
                 "source_kind": kind,
-                "source_parent": object_identity_record(source.parent, parent, "cleanup promotion source parent"),
+                "source_parent": object_identity_record(
+                    source.parent, parent, "cleanup promotion source parent"
+                ),
                 "destination_parent": object_identity_record(
                     destination.parent,
                     parent,
@@ -2793,10 +2941,16 @@ class UndoTransaction:
                 "source_anchor": "target",
                 "source_relative_path": relative.as_posix(),
                 "hold_anchor": CLEANUP_DIR_NAME,
-                "hold_relative_path": destination.relative_to(cleanup_parent(self.target)).as_posix(),
+                "hold_relative_path": destination.relative_to(
+                    cleanup_parent(self.target)
+                ).as_posix(),
                 "source_kind": kind,
-                "source_parent": object_identity_record(source.parent, self.target, "cleanup prepare source parent"),
-                "hold_parent": object_identity_record(destination.parent, cleanup_parent(self.target), "cleanup prepare hold parent"),
+                "source_parent": object_identity_record(
+                    source.parent, self.target, "cleanup prepare source parent"
+                ),
+                "hold_parent": object_identity_record(
+                    destination.parent, cleanup_parent(self.target), "cleanup prepare hold parent"
+                ),
                 "source_tree_sha256": cleanup_tree_sha256(records),
                 "source_records": records,
             }
@@ -2905,7 +3059,11 @@ class UndoTransaction:
                     fsync_parent(source)
                     fsync_parent(destination)
         for directory in reversed(self.created_dirs):
-            if path_exists_no_follow(directory) and directory.is_dir() and not directory.is_symlink():
+            if (
+                path_exists_no_follow(directory)
+                and directory.is_dir()
+                and not directory.is_symlink()
+            ):
                 with contextlib.suppress(OSError):
                     directory.rmdir()
                     fsync_parent(directory)
@@ -2942,7 +3100,9 @@ class UndoTransaction:
         return pending
 
 
-def finish_transaction(txn: UndoTransaction, extra_sources: Optional[list[tuple[Path, str]]] = None) -> bool:
+def finish_transaction(
+    txn: UndoTransaction, extra_sources: Optional[list[tuple[Path, str]]] = None
+) -> bool:
     try:
         return txn.cleanup_success(extra_sources)
     except (CleanupFailure, CleanupJournalPublishedInvalid):
@@ -3134,7 +3294,9 @@ def load_backup(target: Path, slot: int) -> tuple[dict[str, Any], dict[Path, byt
     files: dict[Path, bytes] = {}
     for raw_relative in [*envelope["managed_files"], STAMP_NAME]:
         relative = normalize_relative_path(raw_relative, "backup")
-        content, _ = read_regular_file(slot_dir / relative, f"backup file {relative}", owner_only=True)
+        content, _ = read_regular_file(
+            slot_dir / relative, f"backup file {relative}", owner_only=True
+        )
         files[relative] = content
     return envelope, files
 
@@ -3202,7 +3364,9 @@ def replace_backup_pool(target: Path, state: dict[str, Any]) -> bool:
         build_backup_pool(target, state, new_pool)
         old_pool = backup_pool(target)
         if path_exists_no_follow(old_pool):
-            for relative, _kind in txn.prepare_hold_moves([(Path(BACKUP_POOL_NAME), "backup-undo")]):
+            for relative, _kind in txn.prepare_hold_moves(
+                [(Path(BACKUP_POOL_NAME), "backup-undo")]
+            ):
                 moved = txn.move_existing_to_hold(relative, kind="backup-undo")
                 if moved is not None:
                     txn.mark_for_cleanup(relative, "backup-undo")
@@ -3223,7 +3387,9 @@ def choose_setup_and_profile(
 ) -> tuple[str, str]:
     if operation == "update" and state["state"] != "managed":
         fail("setup update requires an existing managed target")
-    chosen_setup = setup_id or (state.get("setup_id") if state.get("state") == "managed" else DEFAULT_SETUP_ID)
+    chosen_setup = setup_id or (
+        state.get("setup_id") if state.get("state") == "managed" else DEFAULT_SETUP_ID
+    )
     chosen_profile = profile_id or (
         state.get("profile_id") if state.get("state") == "managed" else DEFAULT_PROFILE_ID
     )
@@ -3352,7 +3518,9 @@ def plan_setup(
     }
 
 
-def migrate_setup(target: Path, *, profile_id: Optional[str], workspace: Optional[str]) -> dict[str, Any]:
+def migrate_setup(
+    target: Path, *, profile_id: Optional[str], workspace: Optional[str]
+) -> dict[str, Any]:
     state = inspect_target(target)
     if state["state"] == "managed":
         return setup_lifecycle(
@@ -3450,7 +3618,9 @@ def software_presence(target: Path) -> dict[str, Any]:
     }
 
 
-def file_sha256(path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BYTES) -> tuple[str, int]:
+def file_sha256(
+    path: Path, label: str, *, max_bytes: int = SOFTWARE_TREE_MAX_BYTES
+) -> tuple[str, int]:
     content, info = read_regular_file(path, label, max_bytes=max_bytes)
     return sha256_bytes(content), info.st_size
 
@@ -3590,7 +3760,9 @@ def download_asset_bytes(url: str, *, expected_size: int) -> bytes:
             except ValueError:
                 fail("Qoder CLI download returned invalid Content-Length")
             if declared != expected_size:
-                fail(f"Qoder CLI download Content-Length mismatch: expected {expected_size}, got {declared}")
+                fail(
+                    f"Qoder CLI download Content-Length mismatch: expected {expected_size}, got {declared}"
+                )
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -3611,7 +3783,11 @@ def download_asset_bytes(url: str, *, expected_size: int) -> bytes:
 
 def validate_archive_member_path(name: str) -> PurePosixPath:
     normalized = name.replace("\\", "/")
-    if "\x00" in normalized or normalized.startswith("//") or re.fullmatch(r"(?i)[a-z]:.*", normalized):
+    if (
+        "\x00" in normalized
+        or normalized.startswith("//")
+        or re.fullmatch(r"(?i)[a-z]:.*", normalized)
+    ):
         fail(f"unsafe archive member path: {name}")
     path = PurePosixPath(normalized)
     if not path.parts or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
@@ -3631,7 +3807,11 @@ def safe_tar_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
             continue
         path = validate_archive_member_path(member.name)
         key = path.as_posix()
-        if key == "._qodercli" and member.isfile() and member.size <= APPLEDOUBLE_METADATA_MAX_BYTES:
+        if (
+            key == "._qodercli"
+            and member.isfile()
+            and member.size <= APPLEDOUBLE_METADATA_MAX_BYTES
+        ):
             continue
         if key in seen:
             fail(f"duplicate archive member path: {member.name}")
@@ -3707,7 +3887,10 @@ def extract_archive(archive_path: Path, unpacked: Path) -> None:
                 with archive.open(info) as source, destination.open("wb") as handle:
                     shutil.copyfileobj(source, handle)
                 member_mode = (info.external_attr >> 16) & 0o777
-                os.chmod(destination, OWNER_EXECUTABLE_MODE if member_mode & stat.S_IXUSR else OWNER_FILE_MODE)
+                os.chmod(
+                    destination,
+                    OWNER_EXECUTABLE_MODE if member_mode & stat.S_IXUSR else OWNER_FILE_MODE,
+                )
     else:
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in safe_tar_members(archive):
@@ -3722,7 +3905,10 @@ def extract_archive(archive_path: Path, unpacked: Path) -> None:
                 ensure_private_parent(destination, f"archive member {member.name}")
                 with source, destination.open("wb") as handle:
                     shutil.copyfileobj(source, handle)
-                os.chmod(destination, OWNER_EXECUTABLE_MODE if member.mode & stat.S_IXUSR else OWNER_FILE_MODE)
+                os.chmod(
+                    destination,
+                    OWNER_EXECUTABLE_MODE if member.mode & stat.S_IXUSR else OWNER_FILE_MODE,
+                )
     chmod_private_tree(unpacked)
 
 
@@ -3737,7 +3923,9 @@ def find_extracted_binary(unpacked: Path) -> Path:
     return candidates[0]
 
 
-def bounded_process(command: list[str], *, cwd: Path, env: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
+def bounded_process(
+    command: list[str], *, cwd: Path, env: dict[str, str], timeout: int
+) -> subprocess.CompletedProcess[str]:
     try:
         completed = subprocess.run(
             command,
@@ -3754,7 +3942,10 @@ def bounded_process(command: list[str], *, cwd: Path, env: dict[str, str], timeo
         fail(f"process executable not found: {command[0]}")
     except subprocess.TimeoutExpired:
         fail(f"process timed out after {timeout} seconds: {command[0]}")
-    if len(completed.stdout) > PROCESS_OUTPUT_MAX_BYTES or len(completed.stderr) > PROCESS_OUTPUT_MAX_BYTES:
+    if (
+        len(completed.stdout) > PROCESS_OUTPUT_MAX_BYTES
+        or len(completed.stderr) > PROCESS_OUTPUT_MAX_BYTES
+    ):
         fail(f"process output exceeded the {PROCESS_OUTPUT_MAX_BYTES}-byte limit: {command[0]}")
     return completed
 
@@ -3763,7 +3954,14 @@ def stage_probe_environment(stage: Path) -> dict[str, str]:
     home = stage / "home"
     runtime = stage / "runtime"
     tmp = runtime / "tmp"
-    for directory in (home, runtime, tmp, runtime / "xdg-config", runtime / "xdg-cache", runtime / "xdg-state"):
+    for directory in (
+        home,
+        runtime,
+        tmp,
+        runtime / "xdg-config",
+        runtime / "xdg-cache",
+        runtime / "xdg-state",
+    ):
         directory.mkdir(mode=OWNER_DIRECTORY_MODE, parents=True, exist_ok=True)
         os.chmod(directory, OWNER_DIRECTORY_MODE)
     return {
@@ -3796,7 +3994,11 @@ def build_live_stage(staging: Path, asset_key: str, asset: dict[str, Any]) -> Pa
     url = asset.get("url")
     expected_sha = asset.get("sha256")
     expected_size = asset.get("size")
-    if not isinstance(url, str) or not isinstance(expected_sha, str) or not isinstance(expected_size, int):
+    if (
+        not isinstance(url, str)
+        or not isinstance(expected_sha, str)
+        or not isinstance(expected_size, int)
+    ):
         fail(f"baseline asset {asset_key} is incomplete")
     archive_bytes = download_asset_bytes(url, expected_size=expected_size)
     if sha256_bytes(archive_bytes) != expected_sha:
@@ -3859,7 +4061,12 @@ def apply_software_state(
         if not remove:
             assert live_stage is not None
             for relative in SOFTWARE_REPLACE_PATHS:
-                content, _ = read_regular_file(live_stage / relative, f"staged software {relative}", max_bytes=SOFTWARE_TREE_MAX_BYTES, allow_nlink=None)
+                content, _ = read_regular_file(
+                    live_stage / relative,
+                    f"staged software {relative}",
+                    max_bytes=SOFTWARE_TREE_MAX_BYTES,
+                    allow_nlink=None,
+                )
                 txn.write_file(relative, content, executable=relative == Path("bin") / COMMAND_NAME)
         if remove:
             if software_presence(target)["software_state"] != "absent":
@@ -3925,7 +4132,9 @@ def install_or_update_cli(target: Path, *, operation: str) -> dict[str, Any]:
             if any(path_exists_no_follow(path) for path in authority_paths):
                 fail("uncommitted software stage cannot be removed while cleanup authority exists")
             delete_bounded_uncommitted_tree(staging)
-            if path_exists_no_follow(cleanup_parent(target)) and not any(cleanup_parent(target).iterdir()):
+            if path_exists_no_follow(cleanup_parent(target)) and not any(
+                cleanup_parent(target).iterdir()
+            ):
                 cleanup_parent(target).rmdir()
                 fsync_parent(cleanup_parent(target))
         raise
@@ -4109,7 +4318,9 @@ def add_target_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--target", required=True, help="explicit absolute Qoder CLI target")
 
 
-def add_setup_profile_workspace_arguments(parser: argparse.ArgumentParser, *, setup_default: bool = True) -> None:
+def add_setup_profile_workspace_arguments(
+    parser: argparse.ArgumentParser, *, setup_default: bool = True
+) -> None:
     parser.add_argument("--setup", default=DEFAULT_SETUP_ID if setup_default else None)
     parser.add_argument("--profile", default=DEFAULT_PROFILE_ID if setup_default else None)
     parser.add_argument("--workspace", help="absolute trusted workspace stored in Qoder settings")
@@ -4143,7 +4354,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     migrate_parser = subparsers.add_parser("migrate", help="migrate legacy managed Qoder state")
     add_target_argument(migrate_parser)
     migrate_parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
-    migrate_parser.add_argument("--workspace", help="absolute trusted workspace stored in Qoder settings")
+    migrate_parser.add_argument(
+        "--workspace", help="absolute trusted workspace stored in Qoder settings"
+    )
     add_json_argument(migrate_parser)
     restore_parser = subparsers.add_parser("restore", help="restore a target-bound backup")
     add_target_argument(restore_parser)
