@@ -171,7 +171,7 @@ def validate_public_tree(errors: list[str]) -> None:
     if (claude / "CLAUDE.md").exists() and not (claude / "CLAUDE.md").is_symlink():
         require(
             (claude / "CLAUDE.md").read_text(encoding="utf-8")
-            == "See [../AGENTS.md](../AGENTS.md) for the repository instructions.\n",
+            == "@../AGENTS.md\n",
             "Claude compatibility bridge mismatch",
             errors,
         )

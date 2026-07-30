@@ -1,6 +1,11 @@
-# NDDev Qoder CLI Public Module
+# Repository instructions
 
-This repository owns the public, user-runnable Qoder CLI setup manager.
-Managed setup instructions are sourced from `setups/nddev-builder/AGENTS.md`.
-The local `nddev-builder` plugin is a Qoder-native projection and does not
-declare or depend on a marketplace.
+- Treat this clone as one independent Git mutation boundary.
+- Preserve unrelated branches, worktrees, submodules, and dirty changes.
+- Follow the repository's local documentation and source-owned contracts.
+- Keep secrets, credentials, runtime state, caches, logs, and generated evidence
+  out of version control.
+
+## Verification
+
+- Test: `python3 -m json.tool config/nddev-contract.json`.
