@@ -49,7 +49,7 @@ CLEANUP_RETIRED_NAME = "NDDEV-QODER-CLI-CLEANUP-RETIRED.json"
 SOFTWARE_MANIFEST_NAME = "qoder-cli.json"
 BASELINE_REF = ROOT / "references" / "qoder-cli-baseline.json"
 
-TESTED_VERSION = "1.1.8"
+TESTED_VERSION = "1.1.9"
 NPM_PACKAGE = "@qoder-ai/qodercli"
 INSTALL_SCRIPT_URL = "https://qoder.com/install"
 INSTALL_SCRIPT_SHA256 = "1e850fa3375bdccd179215f91638f4065d912c5dbddbd346d0ba352bad8ca9be"
