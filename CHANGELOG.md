@@ -4,7 +4,7 @@ All notable changes to `nddev-qoder-cli-app` are documented here.
 
 ## [0.2.0] - 2026-07-28
 
-- Updated the official Qoder CLI baseline to `1.1.7` with exact manifest,
+- Updated the official Qoder CLI baseline to `1.1.10` with exact manifest,
   installer, release-page, and runtime archive observations.
 - Replaced permission-mode setup variants with one `nddev-builder` content
   setup plus separate `full-auto` and `safe` launch profiles.
