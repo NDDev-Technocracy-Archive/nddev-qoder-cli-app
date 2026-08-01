@@ -8,3 +8,17 @@ updates:
       prefix: chore(deps)
     labels:
       - dependencies
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions-minor:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ['*']
+      github-actions-major:
+        applies-to: version-updates
+        update-types: [major]
+        patterns: ['*']
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ['*']
