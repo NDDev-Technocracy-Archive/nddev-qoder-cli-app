@@ -1686,12 +1686,21 @@ def tree_records(root: Path) -> list[dict[str, Any]]:
     total_paths = 1
     total_bytes = 0
     for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        if not path_exists_no_follow(path):
+            continue
         total_paths += 1
         if total_paths > MAX_CLEANUP_TREE_PATHS:
             fail("cleanup tree exceeds path bound")
         info = path.lstat()
         if stat.S_ISLNK(info.st_mode):
-            fail(f"cleanup tree contains symlink: {path.relative_to(root)}")
+            # A probe binary (e.g. the Qoder CLI version probe) may leave
+            # benign symlinks in runtime state (logs/latest). Self-heal
+            # rather than fail: unlink the symlink as long as it is
+            # current-user-owned, mirroring the uncommitted-cleanup recovery.
+            if owner_of(info) != current_uid():
+                fail(f"cleanup tree contains foreign symlink: {path.relative_to(root)}")
+            path.unlink()
+            continue
         if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
             fail(f"cleanup tree contains unsupported object: {path.relative_to(root)}")
         if stat.S_ISREG(info.st_mode):
