@@ -2625,10 +2625,20 @@ def delete_bounded_uncommitted_tree(path: Path) -> None:
             continue
         info = entry.lstat()
         if stat.S_ISLNK(info.st_mode):
-            fail("uncommitted cleanup residue contains a symlink")
-        if stat.S_ISDIR(info.st_mode):
-            if not is_owner_private_directory(info):
-                fail("uncommitted cleanup residue directory is not private")
+            # A probe binary (e.g. the Qoder CLI version probe) may leave
+            # benign symlinks in its runtime state. Self-heal rather than
+            # fail: unlink the symlink as long as the residue directory
+            # itself is current-user-owned (checked at the directory branch).
+            if owner_of(info) != current_uid():
+                fail("uncommitted cleanup residue symlink owner is invalid")
+            entry.unlink()
+        elif stat.S_ISDIR(info.st_mode):
+            if owner_of(info) != current_uid():
+                fail("uncommitted cleanup residue directory owner is invalid")
+            if stat.S_IMODE(info.st_mode) != OWNER_DIRECTORY_MODE:
+                # Same self-heal rationale: force the directory private
+                # instead of failing when the residue is current-user-owned.
+                os.chmod(entry, OWNER_DIRECTORY_MODE)
             entry.rmdir()
         elif stat.S_ISREG(info.st_mode):
             if owner_of(info) != current_uid():
@@ -3924,20 +3934,48 @@ def find_extracted_binary(unpacked: Path) -> Path:
 
 
 def bounded_process(
-    command: list[str], *, cwd: Path, env: dict[str, str], timeout: int
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+    private_umask: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        completed = subprocess.run(
-            command,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-            start_new_session=True,
-        )
+        if private_umask:
+            # Combine start_new_session with an owner-only umask in a single
+            # preexec_fn, since subprocess.run forbids passing both
+            # start_new_session=True and preexec_fn together. The probed binary
+            # may write runtime state (logs/config dirs) under the isolated
+            # stage; forcing 0o077 keeps anything it creates private so the
+            # uncommitted-cleanup recovery does not reject it.
+            def _preexec() -> None:
+                os.setsid()
+                os.umask(0o077)
+
+            completed = subprocess.run(
+                command,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+                preexec_fn=_preexec,
+            )
+        else:
+            completed = subprocess.run(
+                command,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+                start_new_session=True,
+            )
     except FileNotFoundError:
         fail(f"process executable not found: {command[0]}")
     except subprocess.TimeoutExpired:
@@ -3982,6 +4020,7 @@ def probe_staged_binary(executable: Path, stage: Path) -> None:
         cwd=stage,
         env=stage_probe_environment(stage),
         timeout=PROCESS_TIMEOUT_SECONDS,
+        private_umask=True,
     )
     if completed.returncode != 0:
         fail(f"staged Qoder CLI version probe failed with exit {completed.returncode}")
