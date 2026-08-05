@@ -2,6 +2,12 @@
 
 All notable changes to `nddev-qoder-cli-app` are documented here.
 
+## [0.2.2] - 2026-08-05
+
+- Update the official Qoder CLI baseline from `1.1.14` to stable `1.1.15`.
+- Refresh the canonical channel manifest identity and all seven non-Windows
+  archive sizes and SHA-256 digests while preserving the supported host model.
+
 ## [0.2.1] - 2026-08-05
 
 - Update the official Qoder CLI baseline from `1.1.10` to stable `1.1.14`.

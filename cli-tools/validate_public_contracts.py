@@ -186,6 +186,12 @@ def validate_setup_profiles(errors: list[str]) -> None:
         "enabled plugin mapping mismatch",
         errors,
     )
+    require(
+        settings.get("hooksConfig") == {"enabled": True},
+        "native hooksConfig mapping mismatch",
+        errors,
+    )
+    require("hooks" not in settings, "legacy invalid hooks mapping is present", errors)
     expected = {
         "full-auto": ("bypass_permissions", ["--permission-mode", "bypass_permissions"]),
         "safe": ("dont_ask", ["--permission-mode", "dont_ask"]),

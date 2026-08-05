@@ -12,71 +12,71 @@
   },
   "manifest": {
     "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
-    "latest": "1.1.14",
-    "sha256": "6764d022f5faf207b769233cb1f574c686cba6efeb668390df5a17e05a99dd17",
-    "size": 3085,
+    "latest": "1.1.15",
+    "sha256": "a2e65b54121924633bdd9faf3e4b65421968f7b4e153ea60e51f65260121feb1",
+    "size": 3086,
     "files": {
       "darwin-arm64": {
         "os": "darwin",
         "arch": "arm64",
         "filename": "qodercli-darwin-arm64.tar.gz",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.14/qodercli-darwin-arm64.tar.gz",
-        "sha256": "a66dc2fa1d275df1cc29fa859a2be4b6c9b1a9df4712b953787824b0ebff3634",
-        "size": 38571716
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.15/qodercli-darwin-arm64.tar.gz",
+        "sha256": "25fe36224603090647ac0e0a159d7c6f02949cb7dc33ea45146db1219203243d",
+        "size": 39193171
       },
       "darwin-amd64": {
         "os": "darwin",
         "arch": "amd64",
         "filename": "qodercli-darwin-x64.tar.gz",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.14/qodercli-darwin-x64.tar.gz",
-        "sha256": "19b3a5d24d600f621127a4ea52d3e415806261907aeb2a3dcdbebb7201abdbef",
-        "size": 42621157
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.15/qodercli-darwin-x64.tar.gz",
+        "sha256": "50e9525567029202923ede0eba0e87c1b4b289146880cf64b873612d95a63a38",
+        "size": 42647285
       },
       "linux-arm64-musl": {
         "os": "linux",
         "arch": "arm64-musl",
         "filename": "qodercli-linux-arm64-musl.tar.gz",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.14/qodercli-linux-arm64-musl.tar.gz",
-        "sha256": "a58e4d9d871de84192e55b6ee69302cd35ce75e86ec19fcdb6202454d2cf5c2b",
-        "size": 48713406
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.15/qodercli-linux-arm64-musl.tar.gz",
+        "sha256": "6832b55cec901c6c62febbff0282b25a3de30b17f05687ef42f916c39954f389",
+        "size": 48741043
       },
       "linux-arm64": {
         "os": "linux",
         "arch": "arm64",
         "filename": "qodercli-linux-arm64.tar.gz",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.14/qodercli-linux-arm64.tar.gz",
-        "sha256": "e1744cc9b2429fffc7eb6d673448527225e0969271e1106939387d74d090525e",
-        "size": 50022246
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.15/qodercli-linux-arm64.tar.gz",
+        "sha256": "5d834a6be1184d01d446a625de6e8990697f369b3a4569520b48f5fb893448a6",
+        "size": 50041265
       },
       "linux-amd64-baseline": {
         "os": "linux",
         "arch": "amd64-baseline",
         "filename": "qodercli-linux-x64-baseline.tar.gz",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.14/qodercli-linux-x64-baseline.tar.gz",
-        "sha256": "22cc3e2dec00adb18f2446f096e11f5a7cbeeb70d97480ebc04edd4fb9eae462",
-        "size": 50221893
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.15/qodercli-linux-x64-baseline.tar.gz",
+        "sha256": "b0abde6d7d6a0644b18f38f411d721fe9e109cd52544e4a9526c3340cd1bb496",
+        "size": 50246148
       },
       "linux-amd64-musl": {
         "os": "linux",
         "arch": "amd64-musl",
         "filename": "qodercli-linux-x64-musl.tar.gz",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.14/qodercli-linux-x64-musl.tar.gz",
-        "sha256": "a30a171c308871726c5614af219d834ec91a616d0ffcb70af7ce93cfb67ec233",
-        "size": 49354071
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.15/qodercli-linux-x64-musl.tar.gz",
+        "sha256": "793b16a26044f6aade74cd17c3d6283bae9eef0de759f2ed42f5af83b2feeef9",
+        "size": 49377193
       },
       "linux-amd64": {
         "os": "linux",
         "arch": "amd64",
         "filename": "qodercli-linux-x64.tar.gz",
-        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.14/qodercli-linux-x64.tar.gz",
-        "sha256": "05d25894f0b95b3eac29ac872f178548307f28f97027ea4559ef5060ef91bbe5",
-        "size": 50594136
+        "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.15/qodercli-linux-x64.tar.gz",
+        "sha256": "4741f674e97f0e2bfba24da75049946fbf0c363a3e8cd76ab6adf8cbed7ef591",
+        "size": 50620298
       }
     }
   },
   "npm": {
     "package": "@qoder-ai/qodercli",
-    "version": "1.1.14",
+    "version": "1.1.15",
     "binary": "qodercli"
   },
   "configuration": {

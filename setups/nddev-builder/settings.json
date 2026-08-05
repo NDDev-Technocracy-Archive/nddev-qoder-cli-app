@@ -14,7 +14,7 @@
     "nddev-builder@local": true
   },
   "extraKnownMarketplaces": {},
-  "hooks": {
+  "hooksConfig": {
     "enabled": true
   },
   "tools": {
