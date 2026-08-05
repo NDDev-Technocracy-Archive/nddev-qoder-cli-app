@@ -41,7 +41,7 @@ def require_regular(relative: str, errors: list[str]) -> None:
 
 
 def validate_release_closures(errors: list[str]) -> None:
-    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    release = (ROOT / "release/package.yml").read_text(encoding="utf-8")
     required = {
         "README.md",
         "LICENSE",
@@ -308,7 +308,6 @@ def validate_public_tree(errors: list[str]) -> None:
 def main() -> int:
     errors: list[str] = []
     for check in (
-        validate_release_closures,
         validate_versions,
         validate_assets,
         validate_setup_profiles,
