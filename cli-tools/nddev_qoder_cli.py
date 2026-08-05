@@ -49,14 +49,14 @@ CLEANUP_RETIRED_NAME = "NDDEV-QODER-CLI-CLEANUP-RETIRED.json"
 SOFTWARE_MANIFEST_NAME = "qoder-cli.json"
 BASELINE_REF = ROOT / "references" / "qoder-cli-baseline.json"
 
-TESTED_VERSION = "1.1.10"
+TESTED_VERSION = "1.1.14"
 NPM_PACKAGE = "@qoder-ai/qodercli"
 INSTALL_SCRIPT_URL = "https://qoder.com/install"
 INSTALL_SCRIPT_SHA256 = "1e850fa3375bdccd179215f91638f4065d912c5dbddbd346d0ba352bad8ca9be"
 INSTALL_SCRIPT_SIZE = 10651
 MANIFEST_URL = "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json"
-MANIFEST_SHA256 = "f5aaf3ddcb5bba307173db5a51a72298c20f9cf2d32ba4e8f10b6e80b9cb6594"
-MANIFEST_SIZE = 2717
+MANIFEST_SHA256 = "6764d022f5faf207b769233cb1f574c686cba6efeb668390df5a17e05a99dd17"
+MANIFEST_SIZE = 3085
 
 DEFAULT_SETUP_ID = "nddev-builder"
 DEFAULT_PROFILE_ID = "full-auto"
