@@ -877,9 +877,8 @@ def anchor_binding(
     kind: str, path: Path, canonical_target: Optional[Path] = None
 ) -> dict[str, Any]:
     binding: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "product_name": PRODUCT_NAME,
-        "build_version": VERSION,
         "kind": kind,
         "uid": current_uid(),
     }
@@ -907,6 +906,24 @@ def expected_anchor_value(
     path: Path, kind: str, canonical_target: Optional[Path]
 ) -> dict[str, Any]:
     return anchor_binding(kind, path, canonical_target)
+
+
+def anchor_value_matches_expected(value: dict[str, Any], expected: dict[str, Any]) -> bool:
+    if value == expected:
+        return True
+    if set(value) != set(expected) | {"build_version"}:
+        return False
+    legacy = dict(value)
+    build_version = legacy.pop("build_version")
+    if (
+        not isinstance(build_version, str)
+        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", build_version) is None
+    ):
+        return False
+    if legacy.get("schema_version") != 1:
+        return False
+    legacy["schema_version"] = 2
+    return legacy == expected
 
 
 def validate_anchor_fd(
@@ -937,7 +954,7 @@ def validate_anchor_fd(
         fail_concurrent(f"{label} changed while it was read")
     value = parse_json_object(content, label)
     expected = expected_anchor_value(path, kind, canonical_target)
-    if value != expected:
+    if not anchor_value_matches_expected(value, expected):
         fail(f"{label} binding is malformed or mismatched")
     return after
 
@@ -948,7 +965,7 @@ def validate_anchor_binding(
     label = f"{kind} lifecycle anchor"
     value = load_strict_json_file(path, label, read_only=read_only)
     expected = expected_anchor_value(path, kind, canonical_target)
-    if value != expected:
+    if not anchor_value_matches_expected(value, expected):
         fail(f"{label} binding is malformed or mismatched")
 
 

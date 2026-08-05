@@ -92,8 +92,9 @@ so the Ubuntu floor is recorded as `null`.
 - explicit absolute `--target` is required for every target operation;
 - supported-host preflight runs before target filesystem observation;
 - read-only commands do not create product or target lock anchors;
-- lifecycle anchors use a platform-stable same-UID protected root independent
-  of caller `TMPDIR`;
+- lifecycle anchors use a platform-stable, release-stable, same-UID protected
+  root independent of caller `TMPDIR`; exact legacy v1 bindings remain readable
+  across manager upgrades while new anchors omit mutable build-version data;
 - target symlinks and managed symlinks/hard links fail closed;
 - archive extraction rejects traversal, symlinks, hard links, device nodes,
   unsafe modes, and oversized trees;

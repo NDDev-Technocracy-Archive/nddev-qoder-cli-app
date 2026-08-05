@@ -7,6 +7,9 @@ All notable changes to `nddev-qoder-cli-app` are documented here.
 - Update the official Qoder CLI baseline from `1.1.10` to stable `1.1.14`.
 - Refresh the canonical channel-manifest identity plus exact digests and sizes
   for every macOS and Linux archive while preserving the existing host policy.
+- Make lifecycle-anchor identity stable across manager releases, write the
+  version-independent v2 binding, and retain strict read compatibility for
+  exact legacy v1 anchors.
 
 ## [0.2.0] - 2026-07-28
 
