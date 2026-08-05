@@ -12,16 +12,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  promotion:
+    name: Verify exact private promotion
+    permissions:
+      contents: read
+    uses: NDDev-it-com/ci-workflows/.github/workflows/release-promotion-gate.yml@f6ea891f09653b8d449098817c8acfdb510731f6 # 0.14.0-dev
+    with:
+      version: ${{ github.ref_name }}
+      runner: amsterdam
   publish:
     name: Publish attested immutable release
+    needs: promotion
     permissions:
       contents: write
       id-token: write
       attestations: write
       artifact-metadata: write
-    uses: NDDev-it-com/ci-workflows/.github/workflows/release-supply-chain.yml@2ccb80e96f5771b6a6b4eae63a4f47e232906dc7 # 0.12.0
+    uses: NDDev-it-com/ci-workflows/.github/workflows/release-supply-chain.yml@f6ea891f09653b8d449098817c8acfdb510731f6 # 0.14.0-dev
     with:
       version: ${{ github.ref_name }}
+      runner: amsterdam
       package_name: nddev-qoder-cli-app
       archive_paths: >-
         README.md LICENSE VERSION CHANGELOG.md SECURITY.md AGENTS.md .claude
