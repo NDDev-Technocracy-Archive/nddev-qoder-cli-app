@@ -49,7 +49,7 @@
   "runtime_compatibility": {
     "baseline_ref": "references/qoder-cli-baseline.json",
     "version_ref": "build/version.json",
-    "tested_version": "1.1.15",
+    "tested_version": "1.1.16",
     "npm_package": "@qoder-ai/qodercli",
     "manifest_url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/manifest.json",
     "documentation": [
@@ -77,7 +77,7 @@
     "caller_home_credentials_inherited": false
   },
   "software_install": {
-    "tested_version": "1.1.15",
+    "tested_version": "1.1.16",
     "supported_product_hosts": ["macos-arm64", "macos-x64", "ubuntu-glibc-arm64", "ubuntu-glibc-x64"],
     "unsupported_categories": ["windows", "non-ubuntu-linux", "linux-musl", "unsupported-architecture"],
     "ubuntu_version_floor": null,
@@ -96,7 +96,7 @@
     "stage_version_probe": true,
     "target_owned": true,
     "bounds": {
-      "max_download_bytes": 50620298,
+      "max_download_bytes": 50644756,
       "max_tree_bytes": 536870912,
       "max_tree_paths": 5000
     },
