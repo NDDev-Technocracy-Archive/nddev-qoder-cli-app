@@ -1,7 +1,7 @@
 {
   "contract_version": 2,
   "product_name": "nddev-qoder-cli-app",
-  "github_repository": "NDDev-it-com/nddev-qoder-cli-app",
+  "github_repository": "rldyourmnd/nddev-qoder-cli-app",
   "license": "AGPL-3.0-or-later",
   "manifest_ref": "build/manifest.json",
   "version_ref": "build/version.json",
