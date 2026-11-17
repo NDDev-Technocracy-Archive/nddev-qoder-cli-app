@@ -2,10 +2,11 @@
 
 ## Development status: ON PAUSE
 
-Do not begin feature work, vendor updates, refactoring, releases, issue/PR
-implementation, or repository workflow dispatches here. Resume module-specific
-work only when the owner explicitly names this repository and directs its
-reactivation. Read-only integrity inspection remains allowed.
+Product feature work, vendor updates, refactoring, releases and runtime operations
+remain paused until the owner explicitly reactivates them. Source CI maintenance
+is active: it may maintain source checks, workflow callers and their documentation.
+Do not dispatch repository workflows or run the manager, installer, provider,
+sign-in or model probes as part of that maintenance.
 
 - Treat this clone as one independent Git mutation boundary.
 - Preserve unrelated branches, worktrees, submodules, and dirty changes.
@@ -15,4 +16,5 @@ reactivation. Read-only integrity inspection remains allowed.
 
 ## Verification
 
-- Test: `python3 -m json.tool config/nddev-contract.json`.
+- Source checks: `just check`.
+- Full source and retained-history check: `just verify`.
