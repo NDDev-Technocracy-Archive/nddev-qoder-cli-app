@@ -110,6 +110,13 @@ so the Ubuntu floor is recorded as `null`.
   `cleanup_pending: true`; later mutations drain pending cleanup before active
   changes, while read-only commands only report or fail closed.
 
+## Source maintenance
+
+Product/runtime work remains paused. `just check` runs the existing static public
+contract validator, workflow audits and source secret checks without running the
+manager or using target/provider state. `just verify` also scans the retained Git
+history. This CI maintenance does not install, launch or release the product.
+
 Public contract checks:
 
 ```bash
